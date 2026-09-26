@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>家計 支出分析ツール</title>
+<style>
+  :root, .viz-root {
+    color-scheme: light;
+    --surface-1: #fcfcfb;
+    --page: #f9f9f7;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --gridline: #e1e0d9;
+    --baseline: #c3c2b7;
+    --border: rgba(11,11,11,0.10);
+    --series-fixed: #2a78d6;
+    --series-fun: #eb6834;
+    --series-other: #9c9b95;
+    --good: #0ca30c;
+    --danger: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .viz-root {
+      color-scheme: dark;
+      --surface-1: #1a1a19;
+      --page: #0d0d0d;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --gridline: #2c2c2a;
+      --baseline: #383835;
+      --border: rgba(255,255,255,0.10);
+      --series-fixed: #3987e5;
+      --series-fun: #d95926;
+      --series-other: #7d7b74;
+    }
+  }
+  :root[data-theme="dark"] .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19;
+    --page: #0d0d0d;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --gridline: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255,255,255,0.10);
+    --series-fixed: #3987e5;
+    --series-fun: #d95926;
+    --series-other: #7d7b74;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page);
+    color: var(--text-primary);
+  }
+  .viz-root { max-width: 980px; margin: 0 auto; padding: 24px 16px 80px; }
+
+  header.top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom: 8px; }
+  header.top h1 { font-size: 22px; margin: 0 0 4px; }
+  header.top p { margin: 0; color: var(--text-secondary); font-size: 13px; line-height:1.6; }
+  .theme-btn {
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+    border-radius: 8px; padding: 6px 10px; font-size: 13px; cursor: pointer; white-space: nowrap;
+  }
+
+  .privacy-note {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 14px; font-size: 12.5px; color: var(--text-secondary); margin: 16px 0 24px;
+  }
+  .privacy-note strong { color: var(--text-primary); }
+
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px;
+    padding: 20px; margin-bottom: 20px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 14px; }
+  .card h2 .sub { font-weight: 400; color: var(--text-muted); font-size: 12px; margin-left: 6px; }
+
+  label.field { display:block; font-size: 12.5px; color: var(--text-secondary); margin-bottom: 4px; }
+  select, input[type=text], input[type=number], textarea {
+    font-family: inherit; font-size: 13.5px; color: var(--text-primary);
+    background: var(--page); border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 9px; width: 100%;
+  }
+  textarea { min-height: 130px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+
+  .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid3 { display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  @media (max-width: 640px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
+
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .row.between { justify-content: space-between; }
+
+  .btn {
+    border: 1px solid var(--border); background: var(--page); color: var(--text-primary);
+    border-radius: 8px; padding: 8px 14px; font-size: 13px; cursor: pointer; font-weight: 500;
+  }
+  .btn:hover { background: var(--gridline); }
+  .btn-primary { background: var(--series-fixed); border-color: var(--series-fixed); color: #fff; }
+  .btn-primary:hover { filter: brightness(1.08); }
+  .btn-ghost { background: transparent; border-color: transparent; color: var(--text-secondary); padding: 4px 8px; font-size: 12px; }
+  .btn-ghost:hover { background: var(--gridline); }
+  .btn-danger { color: var(--danger); }
+  .btn-sm { padding: 4px 9px; font-size: 12px; border-radius: 6px; }
+
+  .hint { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+
+  /* Stat tiles */
+  .stat-row { display:grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  @media (max-width: 720px) { .stat-row { grid-template-columns: repeat(2, 1fr); } }
+  .stat-tile { background: var(--page); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  .stat-tile .label { font-size: 12px; color: var(--text-secondary); display:flex; align-items:center; gap:6px; margin-bottom: 6px; }
+  .stat-tile .value { font-size: 22px; font-weight: 600; }
+  .stat-tile.hero .value { font-size: 30px; }
+  .stat-tile .share { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; display:inline-block; flex: none; }
+
+  /* Legend */
+  .legend { display:flex; gap: 18px; flex-wrap: wrap; margin: 10px 0 4px; }
+  .legend-item { display:flex; align-items:center; gap: 6px; font-size: 12.5px; color: var(--text-secondary); }
+  .legend-item .amt { color: var(--text-primary); font-weight: 600; margin-left: 2px; }
+
+  /* Composition bar */
+  .comp-bar { display:flex; height: 24px; border-radius: 4px; overflow: hidden; background: var(--surface-1); gap: 2px; }
+  .comp-seg { height: 100%; cursor: pointer; outline-offset: 2px; }
+  .comp-seg:focus-visible { outline: 2px solid var(--text-primary); }
+  .comp-seg:hover, .comp-seg:focus-visible { filter: brightness(1.08); }
+
+  /* Subcategory bars */
+  .subcat-row { display:grid; grid-template-columns: 128px 1fr 88px; align-items:center; gap: 10px; margin-bottom: 10px; }
+  .subcat-label { font-size: 12.5px; color: var(--text-secondary); text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .subcat-track { background: var(--page); border-radius: 4px; height: 20px; position: relative; }
+  .subcat-bar { height: 100%; border-radius: 0 4px 4px 0; cursor:pointer; outline-offset:2px; }
+  .subcat-bar:hover, .subcat-bar:focus-visible { filter: brightness(1.08); }
+  .subcat-bar:focus-visible { outline: 2px solid var(--text-primary); }
+  .subcat-value { font-size: 12px; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+  /* Monthly chart */
+  .month-chart { display:flex; align-items:flex-end; gap: 18px; height: 180px; padding-top: 10px; border-bottom: 1px solid var(--baseline); overflow-x:auto; }
+  .month-col-wrap { display:flex; flex-direction:column; align-items:center; gap:6px; flex: none; }
+  .month-col { width: 22px; display:flex; flex-direction:column-reverse; gap: 2px; height: 150px; }
+  .month-seg { width:100%; cursor:pointer; outline-offset:2px; }
+  .month-seg:hover, .month-seg:focus-visible { filter: brightness(1.08); }
+  .month-seg:focus-visible { outline: 2px solid var(--text-primary); }
+  .month-label { font-size: 11px; color: var(--text-muted); white-space:nowrap; }
+
+  /* Tooltip */
+  .tooltip {
+    position: fixed; z-index: 50; background: var(--text-primary); color: var(--page);
+    border-radius: 8px; padding: 8px 10px; font-size: 12px; pointer-events: none;
+    max-width: 240px; box-shadow: 0 4px 14px rgba(0,0,0,0.25); display:none;
+  }
+  .tooltip .t-row { display:flex; align-items:center; gap:6px; margin: 2px 0; }
+  .tooltip .t-row .k { width: 8px; height: 2px; background: currentColor; flex:none; }
+  .tooltip .t-val { font-weight: 700; }
+  .tooltip .t-label { opacity: 0.85; }
+
+  table.data-table { width:100%; border-collapse: collapse; font-size: 12.5px; }
+  table.data-table th, table.data-table td { text-align:left; padding: 7px 8px; border-bottom: 1px solid var(--gridline); }
+  table.data-table th { color: var(--text-muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.02em; }
+  table.data-table td.num { text-align:right; font-variant-numeric: tabular-nums; }
+  table.data-table tbody tr:hover { background: var(--page); }
+  .table-scroll { max-height: 420px; overflow-y: auto; border: 1px solid var(--gridline); border-radius: 10px; }
+  .table-scroll table { }
+  .table-scroll thead th { position: sticky; top:0; background: var(--surface-1); }
+
+  .badge { display:inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .badge-fixed { background: color-mix(in srgb, var(--series-fixed) 18%, transparent); color: var(--series-fixed); }
+  .badge-fun { background: color-mix(in srgb, var(--series-fun) 18%, transparent); color: var(--series-fun); }
+  .badge-unknown { background: color-mix(in srgb, var(--series-other) 22%, transparent); color: var(--text-secondary); }
+  .warn-icon { color: var(--danger); font-size: 12px; margin-left: 4px; }
+
+  .rule-form { display:grid; grid-template-columns: 1.4fr 1fr 1fr auto; gap: 8px; margin-top: 12px; align-items:end; }
+  @media (max-width: 640px) { .rule-form { grid-template-columns: 1fr 1fr; } }
+
+  .inline-rule-panel {
+    display:none; background: var(--page); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px; margin-top: 6px; grid-template-columns: 1.4fr 1fr 1fr auto; gap: 8px; align-items:end;
+  }
+  .inline-rule-panel.open { display:grid; }
+  @media (max-width: 640px) { .inline-rule-panel { grid-template-columns: 1fr 1fr; } }
+
+  #empty-state { text-align:center; padding: 40px 20px; color: var(--text-muted); font-size: 13px; }
+  #results-section { display:none; }
+
+  .steps { counter-reset: step; padding: 0; margin: 0; list-style:none; }
+  .steps li { counter-increment: step; margin-bottom: 6px; font-size: 12.5px; color: var(--text-secondary); padding-left: 22px; position: relative; }
+  .steps li::before { content: counter(step); position:absolute; left:0; top:0; width:16px; height:16px; border-radius:50%; background: var(--gridline); color: var(--text-primary); font-size: 10px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+</style>
+</head>
+<body>
+<div class="viz-root" id="app">
+
+  <header class="top">
+    <div>
+      <h1>家計 支出分析ツール</h1>
+      <p>クレジットカード等の明細を「固定生活費」「娯楽・お出かけ」「要確認」に自動で仕分けます。</p>
+    </div>
+    <button class="theme-btn" id="theme-toggle" type="button">🌗 表示切替</button>
+  </header>
+
+  <div class="privacy-note">
+    <strong>🔒 プライバシー：</strong> 入力したデータはすべてこのブラウザの中だけで処理されます。どこにも送信・保存（サーバーへのアップロード）はされません。分類ルールだけはこの端末のブラウザに保存され、次回訪問時も使えます。<strong>共有パソコンをお使いの場合は、使用後に下の「保存データを消去」で削除してください。</strong>
+  </div>
+
+  <div class="card">
+    <h2>① 明細を入力する</h2>
+    <ol class="steps">
+      <li>カード会社サイトなどから明細をコピーして貼り付ける、またはCSV/PDFファイルを選ぶ</li>
+      <li>日付・内容・金額の列を確認する（自動推定されます。違っていたら選び直してください）</li>
+      <li>「分類する」を押す</li>
+    </ol>
+
+    <div class="grid2" style="margin-top:14px;">
+      <div>
+        <label class="field">明細を貼り付け（CSV / タブ区切り）</label>
+        <textarea id="paste-area" placeholder="例）
+日付,内容,金額
+2026/06/03,スーパーライフ,4200
+2026/06/05,トウキヨウガス,5000"></textarea>
+        <div class="hint"><button class="btn btn-ghost btn-sm" id="load-sample" type="button">サンプルデータを試す</button></div>
+      </div>
+      <div>
+        <label class="field">またはCSV/PDFファイルを選択</label>
+        <input type="file" id="file-input" accept=".csv,.txt,.pdf">
+        <div class="hint" id="pdf-hint">PDF明細（利用明細のPDF等）にも対応しています。レイアウトによっては自動抽出がうまくいかない場合があるため、抽出後は左の貼り付け欄で内容を必ず確認してください。</div>
+        <div style="margin-top:10px;" id="encoding-row">
+          <label class="field">文字コード（CSV/TXTが文字化けする場合に切り替え）</label>
+          <select id="encoding-select">
+            <option value="utf-8">UTF-8（標準）</option>
+            <option value="shift-jis">Shift-JIS（日本のカード会社CSVに多い）</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid3" style="margin-top:16px;">
+      <div>
+        <label class="field">日付の列</label>
+        <select id="col-date"></select>
+      </div>
+      <div>
+        <label class="field">内容（店名など）の列</label>
+        <select id="col-desc"></select>
+      </div>
+      <div>
+        <label class="field">金額の列</label>
+        <select id="col-amount"></select>
+      </div>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <label style="font-size:12.5px; color:var(--text-secondary); display:flex; align-items:center; gap:6px;">
+        <input type="checkbox" id="has-header" checked> 1行目はヘッダー（項目名）
+      </label>
+    </div>
+
+    <div class="row" style="margin-top:16px;">
+      <button class="btn btn-primary" id="classify-btn" type="button">分類する</button>
+      <span class="hint" id="parse-status"></span>
+    </div>
+  </div>
+
+  <div id="empty-state">まだデータがありません。上で明細を入力して「分類する」を押してください。</div>
+
+  <div id="results-section">
+
+    <div class="card">
+      <h2>② 全体サマリー <span class="sub" id="period-label"></span></h2>
+      <div class="stat-row" id="stat-tiles"></div>
+
+      <div style="margin-top:20px;">
+        <div class="comp-bar" id="comp-bar"></div>
+        <div class="legend" id="comp-legend"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>③ 内訳（カテゴリ別）</h2>
+      <div id="subcat-chart"></div>
+    </div>
+
+    <div class="card" id="monthly-card" style="display:none;">
+      <h2>④ 月次推移 <span class="sub" id="monthly-note"></span></h2>
+      <div class="legend" id="monthly-legend"></div>
+      <div class="month-chart" id="month-chart"></div>
+    </div>
+
+    <div class="card">
+      <h2>⑤ 内訳テーブル（表で確認）</h2>
+      <div class="table-scroll">
+        <table class="data-table" id="breakdown-table">
+          <thead><tr><th>カテゴリ</th><th>サブカテゴリ</th><th class="num">金額</th><th class="num">割合</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>⑥ 分類ルール <span class="sub">キーワードが含まれる明細を自動でカテゴリ分けします（長いキーワードが優先されます）</span></h2>
+      <div class="table-scroll" style="max-height:260px;">
+        <table class="data-table" id="rules-table">
+          <thead><tr><th>キーワード</th><th>カテゴリ</th><th>サブカテゴリ</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="rule-form">
+        <div><label class="field">キーワード</label><input type="text" id="new-rule-keyword" placeholder="例）スターバックス"></div>
+        <div><label class="field">カテゴリ</label><select id="new-rule-category"></select></div>
+        <div><label class="field">サブカテゴリ</label><select id="new-rule-subcategory"></select></div>
+        <div><button class="btn btn-primary btn-sm" id="add-rule-btn" type="button">追加</button></div>
+      </div>
+      <div class="row" style="margin-top:14px;">
+        <button class="btn btn-sm" id="export-rules" type="button">ルールをエクスポート(JSON)</button>
+        <button class="btn btn-sm" id="import-rules-btn" type="button">ルールをインポート</button>
+        <input type="file" id="import-rules-file" accept=".json" style="display:none;">
+        <button class="btn btn-sm btn-ghost" id="reset-rules" type="button">初期ルールに戻す</button>
+        <button class="btn btn-sm btn-ghost btn-danger" id="clear-all" type="button">保存データを消去</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>⑦ 取引一覧 <span class="sub">カテゴリ列から手動で修正できます</span></h2>
+      <div class="row between" style="margin-bottom:10px;">
+        <input type="text" id="tx-search" placeholder="内容で検索..." style="max-width:220px;">
+        <button class="btn btn-sm" id="export-csv" type="button">分類済みCSVをダウンロード</button>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table" id="tx-table">
+          <thead><tr><th>日付</th><th>内容</th><th class="num">金額</th><th>カテゴリ</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="tooltip" id="tooltip"></div>
+</div>
+
+<script src="./pdf.min.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>
