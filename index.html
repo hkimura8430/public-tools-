@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>家計 支出分析ツール</title>
 <style>
   :root, .viz-root {
@@ -175,6 +175,8 @@
   .badge-fixed { background: color-mix(in srgb, var(--series-fixed) 18%, transparent); color: var(--series-fixed); }
   .badge-fun { background: color-mix(in srgb, var(--series-fun) 18%, transparent); color: var(--series-fun); }
   .badge-unknown { background: color-mix(in srgb, var(--series-other) 22%, transparent); color: var(--text-secondary); }
+  .badge-ocr { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); cursor: help; }
+  .ocr-note { font-size: 12px; color: var(--danger); margin-top: 6px; }
   .warn-icon { color: var(--danger); font-size: 12px; margin-left: 4px; }
 
   .rule-form { display:grid; grid-template-columns: 1.4fr 1fr 1fr auto; gap: 8px; margin-top: 12px; align-items:end; }
@@ -231,6 +233,11 @@
         <label class="field">またはCSV/PDFファイルを選択</label>
         <input type="file" id="file-input" accept=".csv,.txt,.pdf">
         <div class="hint" id="pdf-hint">PDF明細（利用明細のPDF等）にも対応しています。レイアウトによっては自動抽出がうまくいかない場合があるため、抽出後は左の貼り付け欄で内容を必ず確認してください。</div>
+        <div id="ocr-offer" style="display:none; margin-top:8px;">
+          <button class="btn btn-sm" id="ocr-try-btn" type="button">画像認識(OCR)で試す</button>
+          <div class="ocr-note">文字情報を持たないPDF（文字が図形として描画されているPDF等）向けの代替手段です。初回は追加で約5.6MBのダウンロードが発生し、数十秒〜数分かかります。画像認識のため数字を誤認識することがあるため、結果は必ず元のPDFと見比べてください。</div>
+          <div class="hint" id="ocr-progress"></div>
+        </div>
         <div style="margin-top:10px;" id="encoding-row">
           <label class="field">文字コード（CSV/TXTが文字化けする場合に切り替え）</label>
           <select id="encoding-select">

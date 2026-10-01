@@ -1,4 +1,3 @@
-
 (function () {
   "use strict";
 
@@ -356,22 +355,27 @@
     var status = document.getElementById("parse-status");
     var classifyBtn = document.getElementById("classify-btn");
     var fileInput = document.getElementById("file-input");
+    document.getElementById("ocr-offer").style.display = "none";
     status.textContent = "PDFを解析中...";
     classifyBtn.disabled = true;
     try {
       var lines = await extractPdfLines(file);
       fileInput.value = ""; // always clear so a later click never re-reads the PDF binary as text
       if (!lines.length) {
-        status.textContent = "⚠ このPDFからテキストを抽出できませんでした。スキャン画像のPDF、またはパスワード保護されたPDFの可能性があります。お手数ですがCSVでの入力をお試しください。";
+        status.textContent = "⚠ このPDFからテキストを抽出できませんでした。文字情報を持たないPDF（文字が図形として描画されているPDF等）、スキャン画像のPDF、またはパスワード保護されたPDFの可能性があります。下の「画像認識(OCR)で試す」、またはCSVでの入力をお試しください。";
+        lastInputWasOcr = false;
+        showOcrOffer(file);
         return;
       }
       var result = pdfLinesToCsv(lines);
       if (!result.rows.length) {
+        lastInputWasOcr = false;
         document.getElementById("paste-area").value = lines.join("\n");
         analyzeInput();
         status.textContent = "⚠ PDFからテキスト(" + lines.length + "行)は抽出できましたが、「日付」と「金額」の並びを自動検出できませんでした。下の貼り付け欄に抽出テキストを入れたので、列の選択と内容を確認するか「日付,内容,金額」の形に手直ししてから分類してください。";
         return;
       }
+      lastInputWasOcr = false;
       document.getElementById("paste-area").value = result.csvText;
       analyzeInput();
       status.textContent = "PDFから " + result.rows.length + " 件の明細候補を抽出しました（全" + lines.length + "行中）" +
@@ -383,6 +387,115 @@
       classifyBtn.disabled = false;
     }
   }
+
+  // ---------- OCR (fallback for PDFs with no extractable text layer) ----------
+  // Lazy-loaded: only fetched when the user explicitly opts in, so the common
+  // case (CSV, or a PDF with a real text layer) never pays this ~5.6MB cost.
+  var lastInputWasOcr = false;
+  var tesseractLoadPromise = null;
+  function loadTesseractScript() {
+    if (window.Tesseract) return Promise.resolve();
+    if (tesseractLoadPromise) return tesseractLoadPromise;
+    tesseractLoadPromise = new Promise(function (resolve, reject) {
+      var s = document.createElement("script");
+      s.src = "./tesseract.min.js";
+      s.onload = function () { resolve(); };
+      s.onerror = function () { reject(new Error("OCRライブラリ(tesseract.min.js)を読み込めませんでした。")); };
+      document.head.appendChild(s);
+    });
+    return tesseractLoadPromise;
+  }
+
+  function showOcrOffer(file) {
+    var offer = document.getElementById("ocr-offer");
+    var btn = document.getElementById("ocr-try-btn");
+    offer.style.display = "block";
+    // Replace the button to drop any previously bound listener (avoids
+    // double-firing if the user tries OCR more than once in a session).
+    var freshBtn = btn.cloneNode(true);
+    btn.parentNode.replaceChild(freshBtn, btn);
+    freshBtn.addEventListener("click", function () { runOcr(file); });
+  }
+
+  async function runOcr(file) {
+    var status = document.getElementById("parse-status");
+    var progressEl = document.getElementById("ocr-progress");
+    var classifyBtn = document.getElementById("classify-btn");
+    var tryBtn = document.getElementById("ocr-try-btn");
+    tryBtn.disabled = true;
+    classifyBtn.disabled = true;
+    var worker = null;
+    try {
+      status.textContent = "OCRライブラリを準備中...（初回は約5.6MBのダウンロードが発生します）";
+      await loadTesseractScript();
+      if (!window.pdfjsLib) throw new Error("PDF読み込みライブラリが利用できません。");
+
+      var buf = await file.arrayBuffer();
+      var pdf = await window.pdfjsLib.getDocument({ data: buf, isEvalSupported: false }).promise;
+
+      progressEl.textContent = "OCRエンジンを初期化中...";
+      worker = await Tesseract.createWorker("jpn", 1, {
+        workerPath: "./tesseract-worker.min.js",
+        corePath: "./tesseract-core-lstm.wasm.js",
+        langPath: "./",
+        gzip: true,
+        cacheMethod: "none",
+        logger: function (m) {
+          if (m && m.status) {
+            var pct = typeof m.progress === "number" ? " (" + Math.round(m.progress * 100) + "%)" : "";
+            progressEl.textContent = "OCR: " + m.status + pct;
+          }
+        }
+      });
+
+      var allLines = [];
+      for (var p = 1; p <= pdf.numPages; p++) {
+        progressEl.textContent = "ページ " + p + "/" + pdf.numPages + " を画像化しています...";
+        var page = await pdf.getPage(p);
+        var viewport = page.getViewport({ scale: 2.5 });
+        var canvas = document.createElement("canvas");
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        var ctx = canvas.getContext("2d");
+        await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+
+        progressEl.textContent = "ページ " + p + "/" + pdf.numPages + " を認識中...";
+        var result = await worker.recognize(canvas);
+        var pageLines = (result.data.lines || [])
+          .map(function (l) { return normalizeText(l.text || "").replace(/\s+/g, " ").trim(); })
+          .filter(Boolean);
+        allLines = allLines.concat(pageLines);
+      }
+      await worker.terminate();
+      worker = null;
+      progressEl.textContent = "";
+
+      if (!allLines.length) {
+        status.textContent = "⚠ OCRでも文字を認識できませんでした。お手数ですがCSVでの入力をお試しください。";
+        return;
+      }
+      var ocrResult = pdfLinesToCsv(allLines);
+      if (!ocrResult.rows.length) {
+        lastInputWasOcr = false;
+        document.getElementById("paste-area").value = allLines.join("\n");
+        analyzeInput();
+        status.textContent = "⚠ OCRでテキスト(" + allLines.length + "行)は認識できましたが、「日付」と「金額」の並びを自動検出できませんでした。内容を確認し、手直ししてから分類してください（画像認識のため誤読の可能性があります）。";
+        return;
+      }
+      lastInputWasOcr = true;
+      document.getElementById("paste-area").value = ocrResult.csvText;
+      analyzeInput();
+      status.textContent = "⚠ OCRで " + ocrResult.rows.length + " 件の明細候補を認識しました。画像認識のため数字を誤認識している場合があります。分類する前に、必ず金額を元のPDFと見比べてください。";
+      document.getElementById("ocr-offer").style.display = "none";
+    } catch (err) {
+      status.textContent = "OCR処理に失敗しました: " + (err && err.message ? err.message : err);
+    } finally {
+      if (worker) { try { await worker.terminate(); } catch (e) {} }
+      tryBtn.disabled = false;
+      classifyBtn.disabled = false;
+    }
+  }
+
   function parseAmountVal(v) {
     if (v === null || v === undefined) return null;
     var s = normalizeText(String(v)).trim();
@@ -507,7 +620,8 @@
           amountUnparsed: amount === null,
           category: cls.category,
           subcategory: cls.subcategory,
-          manual: false
+          manual: false,
+          isOcr: lastInputWasOcr
         });
       });
       transactions = newTx;
@@ -778,6 +892,7 @@
         var tdAmt = document.createElement("td"); tdAmt.className = "num";
         tdAmt.textContent = yen(t.amount);
         if (t.amountUnparsed) { var w = document.createElement("span"); w.className = "warn-icon"; w.title = "金額を読み取れませんでした: " + t.amountRaw; w.textContent = "⚠"; tdAmt.appendChild(w); }
+        if (t.isOcr) { var ob = document.createElement("span"); ob.className = "badge badge-ocr"; ob.style.marginLeft = "6px"; ob.title = "画像認識(OCR)による自動読み取りです。誤読の可能性があるため、金額を元のPDFと見比べてください。"; ob.textContent = "OCR"; tdAmt.appendChild(ob); }
         var tdCat = document.createElement("td");
         var sel = buildCategorySelect(t);
         sel.addEventListener("change", function () {
@@ -948,16 +1063,22 @@
 
   // ---------- wire up ----------
   document.getElementById("load-sample").addEventListener("click", function () {
+    lastInputWasOcr = false;
+    document.getElementById("ocr-offer").style.display = "none";
     document.getElementById("paste-area").value = SAMPLE_CSV;
     document.getElementById("file-input").value = "";
     analyzeInput();
   });
-  document.getElementById("paste-area").addEventListener("change", analyzeInput);
+  document.getElementById("paste-area").addEventListener("change", function () {
+    lastInputWasOcr = false;
+    analyzeInput();
+  });
   document.getElementById("file-input").addEventListener("change", function (e) {
     var file = e.target.files[0];
     if (file && /\.pdf$/i.test(file.name)) {
       handlePdfFile(file);
     } else {
+      lastInputWasOcr = false;
       analyzeInput();
     }
   });
