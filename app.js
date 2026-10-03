@@ -355,7 +355,8 @@
     var status = document.getElementById("parse-status");
     var classifyBtn = document.getElementById("classify-btn");
     var fileInput = document.getElementById("file-input");
-    document.getElementById("ocr-offer").style.display = "none";
+    var ocrOfferEl = document.getElementById("ocr-offer");
+    if (ocrOfferEl) ocrOfferEl.style.display = "none";
     status.textContent = "PDFを解析中...";
     classifyBtn.disabled = true;
     try {
@@ -409,6 +410,11 @@
   function showOcrOffer(file) {
     var offer = document.getElementById("ocr-offer");
     var btn = document.getElementById("ocr-try-btn");
+    if (!offer || !btn) {
+      var status = document.getElementById("parse-status");
+      if (status) status.textContent += "（OCRボタンの表示に失敗しました。ページを再読み込みしてから、もう一度お試しください）";
+      return;
+    }
     offer.style.display = "block";
     // Replace the button to drop any previously bound listener (avoids
     // double-firing if the user tries OCR more than once in a session).
