@@ -349,7 +349,12 @@
     var out = ["日付,内容,金額"];
     rows.forEach(function (r) {
       var descEsc = '"' + r.desc.replace(/"/g, '""') + '"';
-      out.push([r.date, descEsc, r.amount].join(","));
+      // The amount keeps its thousands-separating comma (e.g. "21,800") so
+      // it must be quoted like any other comma-containing CSV field --
+      // otherwise the comma is read as a column delimiter and the amount
+      // gets silently truncated to the part before it when re-parsed.
+      var amountEsc = /[,"\n\r]/.test(r.amount) ? '"' + String(r.amount).replace(/"/g, '""') + '"' : r.amount;
+      out.push([r.date, descEsc, amountEsc].join(","));
     });
     return out.join("\n");
   }
