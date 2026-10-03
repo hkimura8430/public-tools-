@@ -201,7 +201,7 @@
   // Same idea but joined with a symbol instead of whitespace: "26/05/27", "26-05-27".
   var DATE_LEADING_YMD_SEP_RE = /^\s*(\d{2})[\/\-.](\d{1,2})[\/\-.](\d{1,2})(?=\s|$)/;
   var AMOUNT_TOKEN_RE = /[¥￥]?-?[\d,]{2,}(?:\.\d+)?\s*円?/g;
-  var NON_TX_RE = /(合計|小計|残高|ご利用可能|繰越|お支払[いｉ]?金額|締切|支払日|手数料率|実質年率|ポイント|ページ目|明細作成日)/;
+  var NON_TX_RE = /(合計|小計|残高|ご利用可能|繰越|お支払[いｉ]?金額|締切|支払日|手数料率|実質年率|ポイント|ページ目|明細作成日|登録番号|口座番号|口座名義|金融機関|支店名|財務局)/;
   var MAX_TX_LINE_LEN = 70;
 
   function findDateInLine(text) {
@@ -283,11 +283,21 @@
     return text;
   }
   function finalizeDesc(text, amountClean) {
-    var t = stripDuplicateAmount(text, amountClean);
+    var t = text.replace(/[|｜]/g, " "); // table border characters (esp. OCR misreads)
+    t = stripDuplicateAmount(t, amountClean);
     t = t.replace(/(^|\s)\d+回(?=\s|$)/g, " "); // "N回" support-count column
     t = t.replace(/(^|\s)\d(?=\s|$)/g, " ");    // lone single-digit count column
     t = t.replace(/\s+/g, " ").trim();
     return t || "(内容不明)";
+  }
+  // OCR-only: strip a leading run of digits/whitespace/border-noise characters
+  // left over from the "年 月 日" columns, which OCR often garbles into stray
+  // "1"/"i"/"I"/"l" characters bleeding in from the adjacent divider line.
+  // Not applied to the PDF text-layer path, where a real store name could
+  // legitimately start with a digit (e.g. "711", "7net").
+  function stripOcrLeadingNoise(t) {
+    var s = t.replace(/^[\d\s iIlｌ\[\]（）().,\-一ー]{2,20}/, "").trim();
+    return s || t;
   }
 
   // Strict pass: a transaction line carries its own date AND amount.
@@ -423,6 +433,68 @@
     freshBtn.addEventListener("click", function () { runOcr(file); });
   }
 
+  // Thresholds the rendered page to pure black/white. Removes the alternating
+  // row-shading common in statement tables, which otherwise confuses OCR
+  // binarization and segmentation far more than the grid lines themselves do.
+  function preprocessCanvasForOcr(ctx, w, h) {
+    var imgData = ctx.getImageData(0, 0, w, h);
+    var d = imgData.data;
+    var THRESH = 150;
+    for (var i = 0; i < d.length; i += 4) {
+      var lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+      var v = lum < THRESH ? 0 : 255;
+      d[i] = d[i + 1] = d[i + 2] = v;
+    }
+    ctx.putImageData(imgData, 0, 0);
+  }
+
+  // OCR reliably renders a thousands-separating comma as a period in this
+  // table's font/resolution (e.g. "21,800" -> "21.800"). Yen amounts never
+  // have a genuine fractional part, so any "<digits>.<exactly 3 digits>" is
+  // almost certainly a misread comma, not a decimal point.
+  function fixOcrThousands(s) {
+    return s.replace(/(\d)\.(\d{3})(?=\D|$)/g, "$1,$2");
+  }
+
+  // Fallback OCR extraction: per-row dates in a cramped bordered table are
+  // frequently corrupted beyond what any fixed pattern can parse reliably
+  // (stray characters from the column divider bleed into the digits
+  // unpredictably). Store name + amount survive OCR far better than the
+  // date does, so this pass deliberately drops the per-row date rather than
+  // risk assigning a wrong one — every row lands in the same "date unknown"
+  // bucket the rest of the app already handles (counted in totals, excluded
+  // from the monthly chart) instead of corrupting the monthly breakdown.
+  function extractRowsAmountOnly(rawLines) {
+    var rows = [];
+    rawLines.forEach(function (raw) {
+      var line = fixOcrThousands(normalizeText(raw).replace(/\s+/g, " ").trim());
+      if (looksLikeNonTransaction(line)) return;
+      var amtStr = findLastAmountToken(line);
+      if (!amtStr) return;
+      var amtIdx = line.lastIndexOf(amtStr);
+      var amountClean = amtStr.replace(/[¥￥円\s]/g, "");
+      var amtNum = parseFloat(amountClean.replace(/,/g, ""));
+      if (!amtNum || amtNum < 10) return; // guards against stray short numeric noise
+      var desc = stripOcrLeadingNoise(finalizeDesc(line.slice(0, amtIdx) + " " + line.slice(amtIdx + amtStr.length), amountClean));
+      if (desc === "(内容不明)") return;
+      rows.push({ date: "", desc: desc, amount: amountClean });
+    });
+    return rows;
+  }
+
+  // Three-tier OCR extraction: prefer a real per-row date when OCR was clean
+  // enough to produce one reliably (>=3 matches, to avoid trusting a single
+  // coincidental match), then fall back to the date-less amount-only pass.
+  function ocrLinesToCsv(lines) {
+    var normalized = lines.map(fixOcrThousands);
+    var strict = extractRowsStrict(normalized);
+    if (strict.length >= 3) return { rows: strict, csvText: rowsToCsvText(strict), mode: "strict" };
+    var lenient = extractRowsLenient(normalized);
+    if (lenient.length >= 3) return { rows: lenient, csvText: rowsToCsvText(lenient), mode: "lenient" };
+    var amountOnly = extractRowsAmountOnly(lines);
+    return { rows: amountOnly, csvText: rowsToCsvText(amountOnly), mode: "amount-only" };
+  }
+
   async function runOcr(file) {
     var status = document.getElementById("parse-status");
     var progressEl = document.getElementById("ocr-progress");
@@ -458,12 +530,15 @@
       for (var p = 1; p <= pdf.numPages; p++) {
         progressEl.textContent = "ページ " + p + "/" + pdf.numPages + " を画像化しています...";
         var page = await pdf.getPage(p);
-        var viewport = page.getViewport({ scale: 2.5 });
+        var viewport = page.getViewport({ scale: 4.0 });
         var canvas = document.createElement("canvas");
         canvas.width = viewport.width;
         canvas.height = viewport.height;
         var ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+        preprocessCanvasForOcr(ctx, canvas.width, canvas.height);
 
         progressEl.textContent = "ページ " + p + "/" + pdf.numPages + " を認識中...";
         var result = await worker.recognize(canvas);
@@ -480,18 +555,20 @@
         status.textContent = "⚠ OCRでも文字を認識できませんでした。お手数ですがCSVでの入力をお試しください。";
         return;
       }
-      var ocrResult = pdfLinesToCsv(allLines);
+      var ocrResult = ocrLinesToCsv(allLines);
       if (!ocrResult.rows.length) {
         lastInputWasOcr = false;
         document.getElementById("paste-area").value = allLines.join("\n");
         analyzeInput();
-        status.textContent = "⚠ OCRでテキスト(" + allLines.length + "行)は認識できましたが、「日付」と「金額」の並びを自動検出できませんでした。内容を確認し、手直ししてから分類してください（画像認識のため誤読の可能性があります）。";
+        status.textContent = "⚠ OCRでテキスト(" + allLines.length + "行)は認識できましたが、取引らしき行を自動検出できませんでした。内容を確認し、手直ししてから分類してください（画像認識のため誤読の可能性があります）。";
         return;
       }
       lastInputWasOcr = true;
       document.getElementById("paste-area").value = ocrResult.csvText;
       analyzeInput();
-      status.textContent = "⚠ OCRで " + ocrResult.rows.length + " 件の明細候補を認識しました。画像認識のため数字を誤認識している場合があります。分類する前に、必ず金額を元のPDFと見比べてください。";
+      status.textContent = "⚠ OCRで " + ocrResult.rows.length + " 件の明細候補を認識しました。" +
+        (ocrResult.mode === "amount-only" ? "日付の読み取りが不安定だったため、日付は空欄にしています（手動で補ってください）。" : "") +
+        "画像認識のため数字を誤認識している場合があります。分類する前に、必ず金額を元のPDFと見比べてください。";
       document.getElementById("ocr-offer").style.display = "none";
     } catch (err) {
       status.textContent = "OCR処理に失敗しました: " + (err && err.message ? err.message : err);
