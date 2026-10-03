@@ -229,7 +229,10 @@
     return matches[matches.length - 1];
   }
   function looksLikeNonTransaction(line) {
-    if (NON_TX_RE.test(line)) return true;
+    // OCR sometimes inserts a stray space inside a keyword (e.g. "残 額"),
+    // which would dodge a literal-substring match. Test a whitespace-free
+    // copy too so keyword detection survives that kind of noise.
+    if (NON_TX_RE.test(line) || NON_TX_RE.test(line.replace(/\s+/g, ""))) return true;
     if (/[%％]/.test(line)) return true; // fee-rate / disclaimer sentences, never a real amount
     if (line.length > MAX_TX_LINE_LEN) return true; // long prose, not a table row
     return false;
