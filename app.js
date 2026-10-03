@@ -201,7 +201,7 @@
   // Same idea but joined with a symbol instead of whitespace: "26/05/27", "26-05-27".
   var DATE_LEADING_YMD_SEP_RE = /^\s*(\d{2})[\/\-.](\d{1,2})[\/\-.](\d{1,2})(?=\s|$)/;
   var AMOUNT_TOKEN_RE = /[¥￥]?-?[\d,]{2,}(?:\.\d+)?\s*円?/g;
-  var NON_TX_RE = /(合計|小計|残高|ご利用可能|繰越|お支払[いｉ]?金額|締切|支払日|手数料率|実質年率|ポイント|ページ目|明細作成日|登録番号|口座番号|口座名義|金融機関|支店名|財務局)/;
+  var NON_TX_RE = /(合計|小計|残高|ご利用可能|可能枠|繰越|お支払[いｉ]?金額|締切|支払日|支払コース|手数料率|実質年率|融資利率|ポイント|獲得|ページ目|明細作成日|登録番号|口座番号|口座名義|金融機関|支店名|財務局)/;
   var MAX_TX_LINE_LEN = 70;
 
   function findDateInLine(text) {
@@ -526,7 +526,16 @@
         }
       });
 
+      // Each page's extraction cascade (strict -> lenient -> amount-only) is
+      // decided INDEPENDENTLY per page, then the resulting rows are merged.
+      // A combined "all pages at once" judgment would let a cleaner-but-
+      // irrelevant page (e.g. a points/credit-limit summary page, which OCRs
+      // more accurately because it has no shaded table rows) hit the >=3
+      // threshold first and pre-empt the real transaction page's fallback to
+      // amount-only mode — silently dropping the actual transactions.
       var allLines = [];
+      var allRows = [];
+      var anyAmountOnly = false;
       for (var p = 1; p <= pdf.numPages; p++) {
         progressEl.textContent = "ページ " + p + "/" + pdf.numPages + " を画像化しています...";
         var page = await pdf.getPage(p);
@@ -546,6 +555,9 @@
           .map(function (l) { return normalizeText(l.text || "").replace(/\s+/g, " ").trim(); })
           .filter(Boolean);
         allLines = allLines.concat(pageLines);
+        var pageResult = ocrLinesToCsv(pageLines);
+        allRows = allRows.concat(pageResult.rows);
+        if (pageResult.mode === "amount-only") anyAmountOnly = true;
       }
       await worker.terminate();
       worker = null;
@@ -555,8 +567,7 @@
         status.textContent = "⚠ OCRでも文字を認識できませんでした。お手数ですがCSVでの入力をお試しください。";
         return;
       }
-      var ocrResult = ocrLinesToCsv(allLines);
-      if (!ocrResult.rows.length) {
+      if (!allRows.length) {
         lastInputWasOcr = false;
         document.getElementById("paste-area").value = allLines.join("\n");
         analyzeInput();
@@ -564,10 +575,10 @@
         return;
       }
       lastInputWasOcr = true;
-      document.getElementById("paste-area").value = ocrResult.csvText;
+      document.getElementById("paste-area").value = rowsToCsvText(allRows);
       analyzeInput();
-      status.textContent = "⚠ OCRで " + ocrResult.rows.length + " 件の明細候補を認識しました。" +
-        (ocrResult.mode === "amount-only" ? "日付の読み取りが不安定だったため、日付は空欄にしています（手動で補ってください）。" : "") +
+      status.textContent = "⚠ OCRで " + allRows.length + " 件の明細候補を認識しました。" +
+        (anyAmountOnly ? "日付の読み取りが不安定だったページがあり、該当行の日付は空欄にしています（手動で補ってください）。" : "") +
         "画像認識のため数字を誤認識している場合があります。分類する前に、必ず金額を元のPDFと見比べてください。";
       document.getElementById("ocr-offer").style.display = "none";
     } catch (err) {
