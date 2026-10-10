@@ -201,7 +201,7 @@
   // Same idea but joined with a symbol instead of whitespace: "26/05/27", "26-05-27".
   var DATE_LEADING_YMD_SEP_RE = /^\s*(\d{2})[\/\-.](\d{1,2})[\/\-.](\d{1,2})(?=\s|$)/;
   var AMOUNT_TOKEN_RE = /[¥￥]?-?[\d,]{2,}(?:\.\d+)?\s*円?/g;
-  var NON_TX_RE = /(合計|小計|残高|残額|ご利用可能|可能枠|変更可能|繰越|お支払[いｉ]?金額|締切|支払日|支払コース|手数料率|実質年率|融資利率|ポイント|獲得|ページ目|明細作成日|登録番号|口座番号|口座名義|金融機関|支店名|財務局)/;
+  var NON_TX_RE = /(合計|小計|残高|残額|ご利用可能|可能枠|変更可能|繰越|お支払[いｉ]?金額|締切|支払日|支払コース|手数料率|実質年率|融資利率|ポイント|獲得|ページ目|明細作成日|登録番号|口座番号|口座名義|金融機関|支店名|財務局|ご利用分|標準コース|分割払い|万円)/;
   var MAX_TX_LINE_LEN = 70;
 
   function findDateInLine(text) {
@@ -274,14 +274,21 @@
   // (e.g. "ご利用金額" vs "今回のお支払金額") and append a "N回" payment-count
   // cell. Strip that noise so the description reads as a clean store name.
   function stripDuplicateAmount(text, amountClean) {
-    var idx = text.indexOf(amountClean);
-    if (idx === -1) return text;
-    var before = idx === 0 ? " " : text.charAt(idx - 1);
-    var afterIdx = idx + amountClean.length;
-    if (text.charAt(afterIdx) === "円") afterIdx += 1;
-    var after = afterIdx >= text.length ? " " : text.charAt(afterIdx);
-    if (/\s/.test(before) && /\s/.test(after)) {
-      return text.slice(0, idx) + " " + text.slice(afterIdx);
+    // The duplicate column doesn't always carry the same comma formatting
+    // (e.g. final amount "1,222" vs a duplicate column OCR'd as plain "1222"),
+    // so try both forms.
+    var variants = amountClean.indexOf(",") !== -1 ? [amountClean, amountClean.replace(/,/g, "")] : [amountClean];
+    for (var v = 0; v < variants.length; v++) {
+      var needle = variants[v];
+      var idx = text.indexOf(needle);
+      if (idx === -1) continue;
+      var before = idx === 0 ? " " : text.charAt(idx - 1);
+      var afterIdx = idx + needle.length;
+      if (text.charAt(afterIdx) === "円") afterIdx += 1;
+      var after = afterIdx >= text.length ? " " : text.charAt(afterIdx);
+      if (/\s/.test(before) && /\s/.test(after)) {
+        return text.slice(0, idx) + " " + text.slice(afterIdx);
+      }
     }
     return text;
   }
@@ -299,7 +306,7 @@
   // Not applied to the PDF text-layer path, where a real store name could
   // legitimately start with a digit (e.g. "711", "7net").
   function stripOcrLeadingNoise(t) {
-    var s = t.replace(/^[\d\s iIlｌ\[\]（）().,\-一ー]{2,20}/, "").trim();
+    var s = t.replace(/^[\d\s!！?？iIlｌ\[\]（）().,\-一ー]{2,20}/, "").trim();
     return s || t;
   }
 
@@ -1112,23 +1119,81 @@
   }
 
   // ---------- grouped-by-description classification ----------
-  // Collapses repeat transactions that share the exact same "内容" text
-  // (very common for recurring/coded merchants, e.g. a payment-agent code
-  // that appears many times with small amounts) into one row, so the user
-  // classifies it once instead of once per occurrence.
+  // Collapses repeat transactions into one row so the user classifies a
+  // merchant once instead of once per occurrence. Two passes:
+  //  1) exact match on "内容"
+  //  2) fuzzy merge of near-duplicate descriptions (handles OCR glyph noise,
+  //     e.g. "AP/MYBカンムリシンドウ" vs "AP/MYロカンムリシンドウ" where a
+  //     single character was misread) using edit-distance similarity.
+  function editDistance(a, b) {
+    var dp = [], i, j;
+    for (i = 0; i <= a.length; i++) { dp.push([i]); }
+    for (j = 0; j <= b.length; j++) { dp[0][j] = j; }
+    for (i = 1; i <= a.length; i++) {
+      for (j = 1; j <= b.length; j++) {
+        dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+    return dp[a.length][b.length];
+  }
+  // Strip digits/punctuation before comparing -- we only want to compare the
+  // "letters" portion of the description, not leftover numeric noise.
+  function normalizeForCompare(s) {
+    return String(s).replace(/[\d\s!！?？.,\-一ー\[\]（）()|｜]/g, "").toLowerCase();
+  }
+  function descSimilarity(a, b) {
+    if (!a.length || !b.length) return 0;
+    return 1 - editDistance(a, b) / Math.max(a.length, b.length);
+  }
+  var GROUP_FUZZY_THRESHOLD = 0.72; // similarity ratio (0-1); conservative to avoid merging genuinely different merchants
+  var GROUP_FUZZY_MIN_LEN = 4;      // don't fuzzy-merge very short strings -- too easy to collide by chance
+
   function computeGroupedRows() {
-    var map = {};
+    // Pass 1: exact match
+    var exactMap = {};
     var order = [];
     transactions.forEach(function (t) {
       var key = t.description;
-      if (!map[key]) { map[key] = { desc: key, count: 0, total: 0, category: t.category, subcategory: t.subcategory, mixed: false, isOcr: false }; order.push(key); }
-      var g = map[key];
+      if (!exactMap[key]) { exactMap[key] = { desc: key, count: 0, total: 0, category: t.category, subcategory: t.subcategory, mixed: false, isOcr: false, members: [], variants: [] }; order.push(key); }
+      var g = exactMap[key];
       g.count++;
       g.total += t.amount;
+      g.members.push(t);
       if (t.isOcr) g.isOcr = true;
       if (g.category !== t.category || g.subcategory !== t.subcategory) g.mixed = true;
     });
-    return order.map(function (k) { return map[k]; }).sort(function (a, b) { return b.total - a.total; });
+    var exactGroups = order.map(function (k) { return exactMap[k]; });
+    // Largest-first, so the most common (likely cleanest) reading becomes
+    // each cluster's representative label.
+    exactGroups.sort(function (a, b) { return b.total - a.total; });
+
+    // Pass 2: fuzzy-merge near-duplicates into clusters
+    var clusters = [];
+    var compareCache = [];
+    exactGroups.forEach(function (g) {
+      var normDesc = normalizeForCompare(g.desc);
+      var best = null, bestSim = 0;
+      if (normDesc.length >= GROUP_FUZZY_MIN_LEN) {
+        for (var i = 0; i < clusters.length; i++) {
+          if (compareCache[i].length < GROUP_FUZZY_MIN_LEN) continue;
+          var sim = descSimilarity(normDesc, compareCache[i]);
+          if (sim > bestSim) { bestSim = sim; best = clusters[i]; }
+        }
+      }
+      if (best && bestSim >= GROUP_FUZZY_THRESHOLD) {
+        best.count += g.count;
+        best.total += g.total;
+        best.members = best.members.concat(g.members);
+        if (g.isOcr) best.isOcr = true;
+        if (best.category !== g.category || best.subcategory !== g.subcategory) best.mixed = true;
+        best.variants.push(g.desc);
+      } else {
+        clusters.push(g);
+        compareCache.push(normDesc);
+      }
+    });
+    clusters.sort(function (a, b) { return b.total - a.total; });
+    return clusters;
   }
 
   function renderGroupedTable() {
@@ -1137,9 +1202,13 @@
     tbody.innerHTML = "";
     var groups = computeGroupedRows();
     if (!groups.length) { tbody.innerHTML = '<tr><td colspan="5" class="hint">データがありません</td></tr>'; return; }
-    groups.forEach(function (g) {
+    groups.forEach(function (g, gi) {
+      var groupKey = "g" + gi;
       var tr = document.createElement("tr");
-      var tdDesc = document.createElement("td"); tdDesc.textContent = g.desc; tdDesc.title = g.desc;
+      var tdDesc = document.createElement("td");
+      tdDesc.textContent = g.desc;
+      tdDesc.title = g.variants.length ? (g.desc + "\n（表記ゆれとしてまとめた候補: " + g.variants.join(" / ") + "）") : g.desc;
+      if (g.variants.length) { var vb = document.createElement("span"); vb.className = "hint"; vb.style.marginLeft = "6px"; vb.textContent = "+表記ゆれ" + g.variants.length + "件"; tdDesc.appendChild(vb); }
       if (g.isOcr) { var ob = document.createElement("span"); ob.className = "badge badge-ocr"; ob.style.marginLeft = "6px"; ob.title = "画像認識(OCR)による読み取りを含みます"; ob.textContent = "OCR"; tdDesc.appendChild(ob); }
       var tdCount = document.createElement("td"); tdCount.className = "num"; tdCount.textContent = g.count + "件";
       var tdTotal = document.createElement("td"); tdTotal.className = "num"; tdTotal.textContent = yen(g.total);
@@ -1153,9 +1222,7 @@
       sel.addEventListener("change", function () {
         if (!sel.value) return;
         var parts = sel.value.split("::");
-        transactions.forEach(function (t) {
-          if (t.description === g.desc) { t.category = parts[0]; t.subcategory = parts[1]; t.manual = true; }
-        });
+        g.members.forEach(function (t) { t.category = parts[0]; t.subcategory = parts[1]; t.manual = true; });
         renderAll();
       });
       tdCat.appendChild(sel);
@@ -1164,14 +1231,14 @@
       addBtn.className = "btn btn-ghost btn-sm";
       addBtn.type = "button";
       addBtn.textContent = "ルール追加";
-      addBtn.addEventListener("click", function () { toggleInlineRuleForGroup(tr, g); });
+      addBtn.addEventListener("click", function () { toggleInlineRuleForGroup(tr, g, groupKey); });
       tdAction.appendChild(addBtn);
       tr.appendChild(tdDesc); tr.appendChild(tdCount); tr.appendChild(tdTotal); tr.appendChild(tdCat); tr.appendChild(tdAction);
       tbody.appendChild(tr);
 
       var panelRow = document.createElement("tr");
       panelRow.style.display = "none";
-      panelRow.dataset.groupPanelFor = g.desc;
+      panelRow.dataset.groupPanelFor = groupKey;
       var panelCell = document.createElement("td");
       panelCell.colSpan = 5;
       var panel = document.createElement("div");
@@ -1202,9 +1269,9 @@
     });
   }
 
-  function toggleInlineRuleForGroup(tr, g) {
+  function toggleInlineRuleForGroup(tr, g, groupKey) {
     var tbody = tr.parentElement;
-    var panelRow = Array.prototype.find.call(tbody.children, function (r) { return r.dataset && r.dataset.groupPanelFor === g.desc; });
+    var panelRow = Array.prototype.find.call(tbody.children, function (r) { return r.dataset && r.dataset.groupPanelFor === groupKey; });
     if (!panelRow) return;
     var panel = panelRow.querySelector(".inline-rule-panel");
     var isOpen = panel.classList.contains("open");
