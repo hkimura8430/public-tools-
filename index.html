@@ -333,7 +333,17 @@
     </div>
 
     <div class="card">
-      <h2>⑦ 取引一覧 <span class="sub">カテゴリ列から手動で修正できます</span></h2>
+      <h2>⑦ 内容ごとに分類する <span class="sub">同じ内容（店名）をまとめて表示します。1回選べば同じ内容の取引すべてに反映されます</span></h2>
+      <div class="table-scroll">
+        <table class="data-table" id="grouped-table">
+          <thead><tr><th>内容</th><th class="num">件数</th><th class="num">合計金額</th><th>カテゴリ</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>⑧ 取引一覧 <span class="sub">1件ずつ個別に確認・修正したい場合はこちら</span></h2>
       <div class="row between" style="margin-bottom:10px;">
         <input type="text" id="tx-search" placeholder="内容で検索..." style="max-width:220px;">
         <button class="btn btn-sm" id="export-csv" type="button">分類済みCSVをダウンロード</button>

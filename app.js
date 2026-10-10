@@ -1107,7 +1107,109 @@
     renderSubcatChart(agg.sub, total);
     renderMonthly(agg.monthly, agg.minDate, agg.maxDate);
     renderBreakdownTable(agg.sub, agg.totals, total);
+    renderGroupedTable();
     if (!skipTxTable) renderTransactionsTable(); else renderTransactionsTablePreserving();
+  }
+
+  // ---------- grouped-by-description classification ----------
+  // Collapses repeat transactions that share the exact same "内容" text
+  // (very common for recurring/coded merchants, e.g. a payment-agent code
+  // that appears many times with small amounts) into one row, so the user
+  // classifies it once instead of once per occurrence.
+  function computeGroupedRows() {
+    var map = {};
+    var order = [];
+    transactions.forEach(function (t) {
+      var key = t.description;
+      if (!map[key]) { map[key] = { desc: key, count: 0, total: 0, category: t.category, subcategory: t.subcategory, mixed: false, isOcr: false }; order.push(key); }
+      var g = map[key];
+      g.count++;
+      g.total += t.amount;
+      if (t.isOcr) g.isOcr = true;
+      if (g.category !== t.category || g.subcategory !== t.subcategory) g.mixed = true;
+    });
+    return order.map(function (k) { return map[k]; }).sort(function (a, b) { return b.total - a.total; });
+  }
+
+  function renderGroupedTable() {
+    var tbody = document.querySelector("#grouped-table tbody");
+    if (!tbody) return;
+    tbody.innerHTML = "";
+    var groups = computeGroupedRows();
+    if (!groups.length) { tbody.innerHTML = '<tr><td colspan="5" class="hint">データがありません</td></tr>'; return; }
+    groups.forEach(function (g) {
+      var tr = document.createElement("tr");
+      var tdDesc = document.createElement("td"); tdDesc.textContent = g.desc; tdDesc.title = g.desc;
+      if (g.isOcr) { var ob = document.createElement("span"); ob.className = "badge badge-ocr"; ob.style.marginLeft = "6px"; ob.title = "画像認識(OCR)による読み取りを含みます"; ob.textContent = "OCR"; tdDesc.appendChild(ob); }
+      var tdCount = document.createElement("td"); tdCount.className = "num"; tdCount.textContent = g.count + "件";
+      var tdTotal = document.createElement("td"); tdTotal.className = "num"; tdTotal.textContent = yen(g.total);
+      var tdCat = document.createElement("td");
+      var sel = buildCategorySelect(g.mixed ? { category: "", subcategory: "" } : g);
+      if (g.mixed) {
+        var optMixed = document.createElement("option");
+        optMixed.value = ""; optMixed.textContent = "(複数のカテゴリが混在)"; optMixed.selected = true;
+        sel.insertBefore(optMixed, sel.firstChild);
+      }
+      sel.addEventListener("change", function () {
+        if (!sel.value) return;
+        var parts = sel.value.split("::");
+        transactions.forEach(function (t) {
+          if (t.description === g.desc) { t.category = parts[0]; t.subcategory = parts[1]; t.manual = true; }
+        });
+        renderAll();
+      });
+      tdCat.appendChild(sel);
+      var tdAction = document.createElement("td");
+      var addBtn = document.createElement("button");
+      addBtn.className = "btn btn-ghost btn-sm";
+      addBtn.type = "button";
+      addBtn.textContent = "ルール追加";
+      addBtn.addEventListener("click", function () { toggleInlineRuleForGroup(tr, g); });
+      tdAction.appendChild(addBtn);
+      tr.appendChild(tdDesc); tr.appendChild(tdCount); tr.appendChild(tdTotal); tr.appendChild(tdCat); tr.appendChild(tdAction);
+      tbody.appendChild(tr);
+
+      var panelRow = document.createElement("tr");
+      panelRow.style.display = "none";
+      panelRow.dataset.groupPanelFor = g.desc;
+      var panelCell = document.createElement("td");
+      panelCell.colSpan = 5;
+      var panel = document.createElement("div");
+      panel.className = "inline-rule-panel";
+      var kwInput = document.createElement("input"); kwInput.type = "text"; kwInput.value = g.desc;
+      var catSel = document.createElement("select");
+      CAT_ORDER.forEach(function (key) { var o = document.createElement("option"); o.value = key; o.textContent = CATS[key].label; catSel.appendChild(o); });
+      var subSel = document.createElement("select");
+      function fillSub() {
+        subSel.innerHTML = "";
+        CATS[catSel.value].subs.forEach(function (s) { var o = document.createElement("option"); o.value = s; o.textContent = s; subSel.appendChild(o); });
+      }
+      catSel.addEventListener("change", fillSub); fillSub();
+      var saveBtn = document.createElement("button");
+      saveBtn.className = "btn btn-primary btn-sm"; saveBtn.type = "button"; saveBtn.textContent = "ルールを保存";
+      saveBtn.addEventListener("click", function () {
+        var kw = kwInput.value.trim();
+        if (!kw) return;
+        rules.push(withId({ keyword: kw, category: catSel.value, subcategory: subSel.value }));
+        saveRules();
+        reclassifyAll();
+        renderAll();
+      });
+      [kwInput, catSel, subSel, saveBtn].forEach(function (el) { panel.appendChild(el); });
+      panelCell.appendChild(panel);
+      panelRow.appendChild(panelCell);
+      tbody.appendChild(panelRow);
+    });
+  }
+
+  function toggleInlineRuleForGroup(tr, g) {
+    var tbody = tr.parentElement;
+    var panelRow = Array.prototype.find.call(tbody.children, function (r) { return r.dataset && r.dataset.groupPanelFor === g.desc; });
+    if (!panelRow) return;
+    var panel = panelRow.querySelector(".inline-rule-panel");
+    var isOpen = panel.classList.contains("open");
+    tbody.querySelectorAll(".inline-rule-panel.open").forEach(function (p) { p.classList.remove("open"); p.closest("tr").style.display = "none"; });
+    if (!isOpen) { panel.classList.add("open"); panelRow.style.display = ""; }
   }
 
   function renderTransactionsTablePreserving() { renderTransactionsTable(); }
