@@ -520,6 +520,360 @@
     return { rows: amountOnly, csvText: rowsToCsvText(amountOnly), mode: "amount-only" };
   }
 
+  // ---------- gridline-based table extraction (preferred when available) ----------
+  // Whole-line OCR + regex splitting (above) has a structural weakness: when a
+  // row's cells sit close together, Tesseract's own word/line segmentation
+  // merges neighboring cells into one blob (e.g. a date column glued onto the
+  // start of the next store name), and multi-character store names can get
+  // fragmented. A bordered statement table's column dividers are real black
+  // vertical lines, so instead of reading them as text we scan for them as
+  // pixels: a column boundary is an x position that stays dark for almost the
+  // full height of several stacked row-bands. That is a much more reliable
+  // signal than OCR text ever is, and it lets us crop out one column at a
+  // time and OCR each in isolation -- so a row's date, store name, and amount
+  // are never seen by the OCR engine in the same pass and can't bleed into
+  // each other. Non-table pages (a points summary, a payment-plan table with
+  // no real grid) naturally fail the "same lines repeat across several
+  // stacked bands" check below and fall back to the existing whole-line path.
+  var GRIDLINE_BAND_HEIGHT = 300;
+  var GRIDLINE_MIN_COVERAGE = 0.85;
+  var GRIDLINE_MIN_GAP = 30; // px; rejects dense noise (character strokes) misread as a grid
+  var GRIDLINE_MATCH_TOLERANCE = 6; // px
+  var GRIDLINE_MIN_RUN_BANDS = 2; // require the same grid to repeat across >=2 bands before trusting it
+
+  function findGridlinesInBand(ctx, w, yTop, yBottom, minCoverage) {
+    var bandH = yBottom - yTop;
+    var imgData = ctx.getImageData(0, yTop, w, bandH);
+    var d = imgData.data;
+    var counts = new Array(w).fill(0);
+    for (var y = 0; y < bandH; y++) {
+      var rowOffset = y * w * 4;
+      for (var x = 0; x < w; x++) {
+        if (d[rowOffset + x * 4] < 128) counts[x]++;
+      }
+    }
+    var threshold = bandH * minCoverage;
+    var lines = [];
+    var runStart = null;
+    for (var xi = 0; xi < w; xi++) {
+      if (counts[xi] >= threshold) {
+        if (runStart === null) runStart = xi;
+      } else if (runStart !== null) {
+        lines.push({ start: runStart, end: xi - 1, mid: Math.round((runStart + xi - 1) / 2) });
+        runStart = null;
+      }
+    }
+    if (runStart !== null) lines.push({ start: runStart, end: w - 1, mid: Math.round((runStart + w - 1) / 2) });
+    return lines;
+  }
+
+  function gridlinesMatch(a, b, tolerance) {
+    if (a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (Math.abs(a[i].mid - b[i].mid) > tolerance) return false;
+    }
+    return true;
+  }
+
+  // Scans the whole page in horizontal bands and returns the tallest region
+  // where the same set of vertical gridlines repeats across consecutive
+  // bands -- i.e. a real, consistently-bordered table -- or null if nothing
+  // qualifies (the page has no such table, or it's too short to trust).
+  function detectTableRegion(ctx, w, h) {
+    var bands = [];
+    for (var y = 0; y < h; y += GRIDLINE_BAND_HEIGHT) {
+      var yEnd = Math.min(y + GRIDLINE_BAND_HEIGHT, h);
+      if (yEnd - y < GRIDLINE_BAND_HEIGHT * 0.5) break;
+      var raw = findGridlinesInBand(ctx, w, y, yEnd, GRIDLINE_MIN_COVERAGE);
+      var ok = raw.length >= 4;
+      if (ok) {
+        for (var i = 1; i < raw.length; i++) {
+          if (raw[i].mid - raw[i - 1].mid < GRIDLINE_MIN_GAP) { ok = false; break; }
+        }
+      }
+      bands.push({ yTop: y, yBottom: yEnd, lines: ok ? raw : null });
+    }
+    var best = null;
+    var bi = 0;
+    while (bi < bands.length) {
+      if (!bands[bi].lines) { bi++; continue; }
+      var bj = bi + 1;
+      while (bj < bands.length && bands[bj].lines && gridlinesMatch(bands[bi].lines, bands[bj].lines, GRIDLINE_MATCH_TOLERANCE)) bj++;
+      var runBands = bj - bi;
+      var height = bands[bj - 1].yBottom - bands[bi].yTop;
+      if (runBands >= GRIDLINE_MIN_RUN_BANDS && (!best || height > best.height)) {
+        best = { yTop: bands[bi].yTop, yBottom: bands[bj - 1].yBottom, lines: bands[bi].lines, height: height };
+      }
+      bi = bj;
+    }
+    if (best) best = refineRegionBoundaries(ctx, w, h, best);
+    return best;
+  }
+
+  // The coarse band scan above only tests fixed 300px-aligned slices, so a
+  // table whose real top/bottom border doesn't happen to land on one of
+  // those boundaries gets clipped -- losing a few real rows right at the
+  // edge (seen in testing: the first 2-3 transaction rows silently dropped
+  // because the table actually started partway through the first band that
+  // failed the check). This extends yTop/yBottom outward one row at a time,
+  // checking only the already-known gridline x positions (cheap -- no need
+  // to rescan the full row width), stopping as soon as a row isn't dark at
+  // most of them, i.e. the real border. Capped so it can't run away into
+  // unrelated content above/below that coincidentally has dark pixels at a
+  // few of the same x positions.
+  var GRIDLINE_REFINE_MAX_EXTEND = 500;
+  function isRowDarkAtX(ctx, w, y, xs, minFrac) {
+    var imgData = ctx.getImageData(0, y, w, 1);
+    var d = imgData.data;
+    var dark = 0;
+    for (var i = 0; i < xs.length; i++) if (d[xs[i] * 4] < 128) dark++;
+    return dark / xs.length >= minFrac;
+  }
+  function refineRegionBoundaries(ctx, w, h, region) {
+    var xs = region.lines.map(function (l) { return l.mid; });
+    var yTop = region.yTop;
+    var extended = 0;
+    while (yTop > 0 && extended < GRIDLINE_REFINE_MAX_EXTEND && isRowDarkAtX(ctx, w, yTop - 1, xs, 0.8)) { yTop--; extended++; }
+    var yBottom = region.yBottom;
+    extended = 0;
+    while (yBottom < h && extended < GRIDLINE_REFINE_MAX_EXTEND && isRowDarkAtX(ctx, w, yBottom, xs, 0.8)) { yBottom++; extended++; }
+    yTop = skipHeaderRow(ctx, w, yTop, yBottom, region.lines);
+    return { yTop: yTop, yBottom: yBottom, lines: region.lines, height: yBottom - yTop };
+  }
+
+  // Some statement layouts put the column header ("利用日" / "利用店名・商品名"
+  // / ...) inside the same bordered grid as the data rows, with its own
+  // horizontal divider line underneath it -- so it gets swept into the
+  // region above as if it were just another data row (its header text wraps
+  // across several short OCR lines in a narrow column, inflating that
+  // column's row count and throwing off the date-column-based row counting
+  // used everywhere else here). Detect that divider -- a horizontal run that
+  // is dark across nearly the full column span, sitting a little below the
+  // table's own top border -- and move yTop past it. Capped to a plausible
+  // single-row height so it can't mistake an early DATA row's own divider
+  // for a header divider and skip real transactions.
+  var HEADER_ROW_MAX_HEIGHT = 160;
+  function isRowDarkAcrossSpan(ctx, w, y, xFrom, xTo, minFrac) {
+    var span = xTo - xFrom;
+    if (span <= 0) return false;
+    var imgData = ctx.getImageData(xFrom, y, span, 1);
+    var d = imgData.data;
+    var dark = 0;
+    for (var x = 0; x < span; x++) if (d[x * 4] < 128) dark++;
+    return dark / span >= minFrac;
+  }
+  function skipHeaderRow(ctx, w, yTop, yBottom, lines) {
+    var xFrom = lines[0].mid, xTo = lines[lines.length - 1].mid;
+    var limit = Math.min(yTop + HEADER_ROW_MAX_HEIGHT, yBottom - 1);
+    // y=yTop itself is the table's own top border; start looking just below it.
+    for (var y = yTop + 2; y < limit; y++) {
+      if (isRowDarkAcrossSpan(ctx, w, y, xFrom, xTo, 0.9)) return y + 1;
+    }
+    return yTop;
+  }
+
+  function cropCanvasRegion(srcCanvas, x0, y0, x1, y1) {
+    var w = Math.max(1, x1 - x0), h = Math.max(1, y1 - y0);
+    var c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    var cctx = c.getContext("2d");
+    cctx.fillStyle = "#ffffff";
+    cctx.fillRect(0, 0, w, h);
+    cctx.drawImage(srcCanvas, x0, y0, w, h, 0, 0, w, h);
+    return c;
+  }
+
+  async function ocrColumnLines(worker, srcCanvas, x0, y0, x1, y1) {
+    var strip = cropCanvasRegion(srcCanvas, x0, y0, x1, y1);
+    var result = await worker.recognize(strip);
+    return (result.data.lines || [])
+      .map(function (l) { return normalizeText(l.text || "").replace(/[|｜]/g, " ").replace(/\s+/g, " ").trim(); })
+      .filter(Boolean);
+  }
+
+  // Parses a date-column OCR line once the column itself is known to contain
+  // nothing but a date (no store name mixed in, since it was cropped out
+  // separately) -- so unlike findDateInLine() this can be much more
+  // permissive about separators. The statement's real format is always
+  // "YY <sep> MM <sep> DD" with zero-padded month/day, and a misread
+  // separator always shows up as exactly one stray digit glued onto the
+  // group next to it (e.g. "26 02 26" -> "26102126") -- never scattered
+  // arbitrarily. So after stripping everything but digits and taking the
+  // first two as the year, only a handful of "junk?MMjunk?DD"-shaped splits
+  // of the remainder are actually possible; trying those specific splits
+  // (rather than every possible way to drop 2 of the remaining digits) means
+  // a split that merely happens to be numerically valid, like misreading
+  // "0226" out of "102126" as "10/21", never gets picked ahead of the real
+  // "02/26" split that the expected shape points at first.
+  function parseIsolatedDateColumnLine(raw) {
+    var normalized = normalizeText(String(raw || ""));
+    // Some layouts (e.g. a web-rendered statement printed to PDF, as opposed
+    // to a dense bordered table) have enough room that OCR reads the date
+    // cleanly with its real separators and a full 4-digit year, e.g.
+    // "2026/7/31" -- try that directly first since it needs no guessing at
+    // all, before falling back to the 2-digit-year/misread-separator logic
+    // below (written for cramped tables where it doesn't come out this
+    // clean).
+    var clean = normalized.match(/(\d{4})[\/\-.年](\d{1,2})[\/\-.月](\d{1,2})日?/);
+    if (clean) {
+      var cy = +clean[1], cm = +clean[2], cd = +clean[3];
+      if (cm >= 1 && cm <= 12 && cd >= 1 && cd <= 31) return { year: cy, month: cm, day: cd };
+    }
+    var digits = normalized.replace(/\D/g, "");
+    if (digits.length < 6) return null;
+    var year = digits.slice(0, 2);
+    var tail = digits.slice(2);
+    var candidates = [];
+    if (tail.length === 4) {
+      candidates.push([tail.slice(0, 2), tail.slice(2, 4)]); // MMDD, no misread separators
+    } else if (tail.length === 5) {
+      candidates.push([tail.slice(1, 3), tail.slice(3, 5)]); // j MM DD
+      candidates.push([tail.slice(0, 2), tail.slice(3, 5)]); // MM j DD
+    } else if (tail.length === 6) {
+      candidates.push([tail.slice(1, 3), tail.slice(4, 6)]); // j MM j DD -- the expected/most common case
+      candidates.push([tail.slice(0, 2), tail.slice(3, 5)]); // MM j DD j
+      candidates.push([tail.slice(2, 4), tail.slice(4, 6)]); // j j MM DD
+    }
+    for (var i = 0; i < candidates.length; i++) {
+      var mo = +candidates[i][0], da = +candidates[i][1];
+      if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) return { year: 2000 + +year, month: mo, day: da };
+    }
+    return null;
+  }
+
+  function cleanAmountColumnLine(raw) {
+    var s = fixOcrThousands(normalizeText(String(raw || "")).trim());
+    var m = s.match(AMOUNT_TOKEN_RE);
+    if (!m || !m.length) return null;
+    var clean = m[m.length - 1].replace(/[¥￥円\s]/g, "");
+    var num = parseFloat(clean.replace(/,/g, ""));
+    if (!num || num < 1) return null;
+    return clean;
+  }
+
+  // Crops out the date/description/amount columns of a detected table
+  // region and OCRs each in isolation, then reassembles rows by position.
+  // The date column is always leftmost in every real-world layout seen so
+  // far, and the description column is reliably the widest of all (store
+  // names need the most horizontal room) -- both picked geometrically, no
+  // extra OCR needed. The amount column is harder to guess by width alone:
+  // a free-text "摘要/remarks" column (foreign-currency conversion notes,
+  // etc.) is often WIDER than the real amount column, so picking "widest
+  // column to the right of description" picks remarks instead on some real
+  // statements. Instead, OCR candidate columns right-of-description in
+  // width-descending order and keep the first one that (a) mostly parses as
+  // amounts AND (b) has close to one line per transaction. The row-count
+  // reference for (b) is the DATE column, not description: a date like
+  // "26 02 26" never wraps regardless of column width, so it reliably has
+  // exactly one OCR line per transaction, while a store name can wrap across
+  // multiple lines in a narrow description column and a remarks column
+  // produces sporadic multi-line blocks -- both would be unreliable anchors.
+  async function extractTableByGridlines(worker, canvas, region) {
+    var lines = region.lines;
+    if (lines.length < 4) return null;
+    var cols = [];
+    for (var i = 0; i < lines.length - 1; i++) {
+      var x0 = lines[i].end + 2;
+      var x1 = lines[i + 1].start - 2;
+      cols.push(x1 - x0 >= 10 ? { x0: x0, x1: x1, width: x1 - x0 } : null);
+    }
+    var validIdx = [];
+    for (var ci = 0; ci < cols.length; ci++) if (cols[ci]) validIdx.push(ci);
+    if (validIdx.length < 3) return null;
+
+    var dateIdx = validIdx[0];
+    var descIdx = validIdx.reduce(function (best, idx) { return cols[idx].width > cols[best].width ? idx : best; }, validIdx[0]);
+    var rightOfDesc = validIdx.filter(function (idx) { return idx > descIdx; });
+    var amountCandidateIdx = (rightOfDesc.length ? rightOfDesc : validIdx.filter(function (idx) { return idx !== dateIdx && idx !== descIdx; }))
+      .slice()
+      .sort(function (a, b) { return cols[b].width - cols[a].width; })
+      .slice(0, 4); // cap attempts so a pathological layout can't balloon OCR calls
+    if (!amountCandidateIdx.length) return null;
+
+    var dateLines = await ocrColumnLines(worker, canvas, cols[dateIdx].x0, region.yTop, cols[dateIdx].x1, region.yBottom);
+    var descLines = await ocrColumnLines(worker, canvas, cols[descIdx].x0, region.yTop, cols[descIdx].x1, region.yBottom);
+    if (!dateLines.length || !descLines.length) return null;
+
+    // The row count can't be anchored to the date OR the description column
+    // -- either one can independently be unreliable on a real statement (a
+    // date column can OCR as near-total noise on a dense page even when
+    // amounts next to it read fine, the way an "amount-only" OCR fallback
+    // mode already has to tolerate elsewhere in this file; a description
+    // column can wrap long store names across multiple OCR lines, inflating
+    // its own count well past the real transaction total). What IS reliable
+    // is that a real statement usually repeats the same amount under two
+    // different headings (e.g. "ご利用金額" and "今回のお支払金額" for a
+    // one-time payment, or "利用金額" and "支払総額"), so independent amount
+    // candidates that both measure real transactions will agree with each
+    // other on how many rows there are, while a free-text remarks column's
+    // sporadic multi-line blocks won't coincidentally match that count too.
+    // So: OCR every width-ranked candidate, then trust whichever row count
+    // the largest number of good-hit-rate candidates agree on.
+    var results = [];
+    for (var aci = 0; aci < amountCandidateIdx.length; aci++) {
+      var candIdx = amountCandidateIdx[aci];
+      var candLines = await ocrColumnLines(worker, canvas, cols[candIdx].x0, region.yTop, cols[candIdx].x1, region.yBottom);
+      var candParsed = candLines.map(cleanAmountColumnLine);
+      var candHits = candParsed.filter(Boolean).length;
+      results.push({
+        idx: candIdx, lines: candLines, parsed: candParsed, count: candLines.length,
+        rate: candLines.length ? candHits / candLines.length : 0
+      });
+    }
+    var qualifying = results.filter(function (r) { return r.count >= 2 && r.rate >= 0.7; });
+    if (!qualifying.length) return null;
+    var groupsByCount = {};
+    qualifying.forEach(function (r) { (groupsByCount[r.count] = groupsByCount[r.count] || []).push(r); });
+    var bestGroup = null;
+    Object.keys(groupsByCount).forEach(function (k) {
+      var g = groupsByCount[k];
+      if (!bestGroup || g.length > bestGroup.length || (g.length === bestGroup.length && g[0].count > bestGroup[0].count)) bestGroup = g;
+    });
+    bestGroup.sort(function (a, b) { return b.rate - a.rate; });
+    var winner = bestGroup[0];
+    var amountIdx = winner.idx, amountParsed = winner.parsed;
+    var n = winner.count;
+
+    // Now that the real transaction count is known, sanity-check the
+    // description column against it: far more lines means store names are
+    // wrapping (a simple trailing-slice realignment below would then pair
+    // the wrong description with the wrong amount for every row after the
+    // first wrap), and far fewer means something else went wrong -- either
+    // way, safer to concede this page to the whole-line fallback than ship
+    // misaligned data.
+    if (descLines.length > n * 1.5 || descLines.length < n * 0.5) return null;
+
+    // A column header row sometimes ends up inside the detected region with
+    // no distinct divider line to key off of (so the earlier boundary
+    // refinement can't trim it) -- but unlike real data, its cells don't
+    // parse as dates. Drop any leading lines that don't, capped to a
+    // handful: a real header is always short, so if removing unparseable
+    // leading lines would drain more than that, the date column probably
+    // just OCR'd badly throughout this page rather than having a long
+    // header -- in that case leave it alone and let per-row dates come out
+    // blank further down instead of over-trimming real data away.
+    var trimmed = 0;
+    while (dateLines.length && trimmed < 6 && !parseIsolatedDateColumnLine(dateLines[0])) { dateLines.shift(); trimmed++; }
+
+    var dateAligned = dateLines.slice(Math.max(0, dateLines.length - n));
+    var descAligned = descLines.slice(Math.max(0, descLines.length - n));
+    var amountAligned = amountParsed;
+
+    var rows = [];
+    for (var r = 0; r < n; r++) {
+      var amt = amountAligned[r];
+      if (!amt) continue;
+      var dp = parseIsolatedDateColumnLine(dateAligned[r]);
+      rows.push({
+        date: dp ? (dp.year + "/" + dp.month + "/" + dp.day) : "",
+        desc: descAligned[r] || "(内容不明)",
+        amount: amt
+      });
+    }
+    return rows.length >= 2 ? rows : null;
+  }
+
   async function runOcr(file) {
     var status = document.getElementById("parse-status");
     var progressEl = document.getElementById("ocr-progress");
@@ -574,21 +928,44 @@
         await page.render({ canvasContext: ctx, viewport: viewport }).promise;
         preprocessCanvasForOcr(ctx, canvas.width, canvas.height);
 
-        progressEl.textContent = "ページ " + p + "/" + pdf.numPages + " を認識中...";
-        var result = await worker.recognize(canvas);
-        var pageLines = (result.data.lines || [])
-          .map(function (l) { return normalizeText(l.text || "").replace(/\s+/g, " ").trim(); })
-          .filter(Boolean);
-        allLines = allLines.concat(pageLines);
-        var pageResult = ocrLinesToCsv(pageLines);
-        allRows = allRows.concat(pageResult.rows);
-        if (pageResult.mode === "amount-only") anyAmountOnly = true;
+        // Prefer cropping out the table's own columns (via its border lines)
+        // and OCRing date/content/amount separately -- far more accurate
+        // than reading a whole row as one string and guessing where the
+        // cells split, since it can't merge neighboring cells together. If
+        // this page has no reliably-bordered table (a summary page, or an
+        // unrecognized layout), region/gridRows end up null and we fall back
+        // to the original whole-line approach unchanged below.
+        var region = null;
+        try { region = detectTableRegion(ctx, canvas.width, canvas.height); } catch (e) { region = null; }
+        var gridRows = null;
+        if (region) {
+          progressEl.textContent = "ページ " + p + "/" + pdf.numPages + " の表の列を認識中...";
+          try { gridRows = await extractTableByGridlines(worker, canvas, region); } catch (e) { gridRows = null; }
+        }
+
+        if (gridRows && gridRows.length) {
+          allRows = allRows.concat(gridRows);
+        } else {
+          progressEl.textContent = "ページ " + p + "/" + pdf.numPages + " を認識中...";
+          var result = await worker.recognize(canvas);
+          var pageLines = (result.data.lines || [])
+            .map(function (l) { return normalizeText(l.text || "").replace(/\s+/g, " ").trim(); })
+            .filter(Boolean);
+          allLines = allLines.concat(pageLines);
+          var pageResult = ocrLinesToCsv(pageLines);
+          allRows = allRows.concat(pageResult.rows);
+          if (pageResult.mode === "amount-only") anyAmountOnly = true;
+        }
       }
       await worker.terminate();
       worker = null;
       progressEl.textContent = "";
 
-      if (!allLines.length) {
+      // Note: a page fully handled by the gridline/column path never adds to
+      // allLines (it never runs the whole-page OCR call at all), so allLines
+      // being empty does NOT mean nothing was recognized -- only allRows
+      // reflects the combined result of both paths.
+      if (!allLines.length && !allRows.length) {
         status.textContent = "⚠ OCRでも文字を認識できませんでした。お手数ですがCSVでの入力をお試しください。";
         return;
       }
