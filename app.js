@@ -157,10 +157,20 @@
         if (parseAmountVal(v) !== null) amountHits++;
         lenSum += v.length;
       });
-      stats.push({ c: c, dateHits: dateHits, amountHits: amountHits, avgLen: n ? lenSum / n : 0 });
+      stats.push({ c: c, dateHits: dateHits, amountHits: amountHits, avgLen: n ? lenSum / n : 0, n: n });
     }
+    // Require a real majority of a column's (non-empty) values to look like
+    // dates before trusting it -- a single stray date-shaped substring inside
+    // an unrelated free-text column (e.g. OCR noise mentioning "2026年02月")
+    // must not be enough to hijack the date-column pick, especially when the
+    // true date column is mostly/entirely empty (common for OCR rows where
+    // the date couldn't be read) and so never gets a chance to outscore it.
     var dateCol = null, best = 0;
-    stats.forEach(function (s) { if (s.dateHits > best) { best = s.dateHits; dateCol = s.c; } });
+    stats.forEach(function (s) {
+      if (s.n < 2 || s.dateHits < 2) return;
+      var ratio = s.dateHits / s.n;
+      if (ratio >= 0.5 && s.dateHits > best) { best = s.dateHits; dateCol = s.c; }
+    });
     var amountCol = null; best = 0;
     stats.forEach(function (s) { if (s.c !== dateCol && s.amountHits > best) { best = s.amountHits; amountCol = s.c; } });
     var descCol = null; best = -1;
