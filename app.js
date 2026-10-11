@@ -211,7 +211,7 @@
   // Same idea but joined with a symbol instead of whitespace: "26/05/27", "26-05-27".
   var DATE_LEADING_YMD_SEP_RE = /^\s*(\d{2})[\/\-.](\d{1,2})[\/\-.](\d{1,2})(?=\s|$)/;
   var AMOUNT_TOKEN_RE = /[¥￥]?-?[\d,]{2,}(?:\.\d+)?\s*円?/g;
-  var NON_TX_RE = /(合計|小計|残高|残額|ご利用可能|可能枠|変更可能|繰越|お支払[いｉ]?金額|締切|支払日|支払コース|手数料率|実質年率|融資利率|ポイント|獲得|ページ目|明細作成日|登録番号|口座番号|口座名義|金融機関|支店名|財務局|ご利用分|標準コース|分割払い|万円)/;
+  var NON_TX_RE = /(合計|小計|残高|残額|ご利用可能|可能枠|変更可能|繰越|お支払[いｉ]?金額|締切|支払日|支払コース|手数料率|実質年率|融資利率|ポイント|獲得|ページ目|明細作成日|登録番号|口座番号|口座名義|金融機関|支店名|財務局|ご利用分|標準コース|分割払い|万円|請求明細書|請求確定日|ご請求金額|請求年月|翌月以降)/;
   var MAX_TX_LINE_LEN = 70;
 
   function findDateInLine(text) {
@@ -1413,28 +1413,6 @@
     });
   }
 
-  function renderBreakdownTable(sub, totals, total) {
-    var tbody = document.querySelector("#breakdown-table tbody");
-    tbody.innerHTML = "";
-    CAT_ORDER.forEach(function (key) {
-      var c = CATS[key];
-      var names = Object.keys(sub[key]).filter(function (n) { return sub[key][n] > 0; }).sort(function (a, b) { return sub[key][b] - sub[key][a]; });
-      names.forEach(function (name) {
-        var v = sub[key][name];
-        var tr = document.createElement("tr");
-        var tdCat = document.createElement("td");
-        var swatch = document.createElement("span"); swatch.className = "swatch"; swatch.style.background = c.color; swatch.style.marginRight = "6px";
-        tdCat.appendChild(swatch);
-        tdCat.appendChild(document.createTextNode(c.label));
-        var tdSub = document.createElement("td"); tdSub.textContent = name;
-        var tdAmt = document.createElement("td"); tdAmt.className = "num"; tdAmt.textContent = yen(v);
-        var tdPct = document.createElement("td"); tdPct.className = "num"; tdPct.textContent = total ? pct(v / total) : "-";
-        tr.appendChild(tdCat); tr.appendChild(tdSub); tr.appendChild(tdAmt); tr.appendChild(tdPct);
-        tbody.appendChild(tr);
-      });
-    });
-  }
-
   function categoryBadge(key) {
     var span = document.createElement("span");
     span.className = "badge badge-" + key;
@@ -1591,7 +1569,6 @@
     renderComposition(agg.totals, total);
     renderSubcatChart(agg.sub, total);
     renderMonthly(agg.monthly, agg.minDate, agg.maxDate);
-    renderBreakdownTable(agg.sub, agg.totals, total);
     renderGroupedTable();
     if (!skipTxTable) renderTransactionsTable(); else renderTransactionsTablePreserving();
   }
@@ -1679,7 +1656,7 @@
     if (!tbody) return;
     tbody.innerHTML = "";
     var groups = computeGroupedRows();
-    if (!groups.length) { tbody.innerHTML = '<tr><td colspan="5" class="hint">データがありません</td></tr>'; return; }
+    if (!groups.length) { tbody.innerHTML = '<tr><td colspan="7" class="hint">データがありません</td></tr>'; return; }
     groups.forEach(function (g, gi) {
       var groupKey = "g" + gi;
       var tr = document.createElement("tr");
@@ -1711,14 +1688,60 @@
       addBtn.textContent = "ルール追加";
       addBtn.addEventListener("click", function () { toggleInlineRuleForGroup(tr, g, groupKey); });
       tdAction.appendChild(addBtn);
-      tr.appendChild(tdDesc); tr.appendChild(tdCount); tr.appendChild(tdTotal); tr.appendChild(tdCat); tr.appendChild(tdAction);
+
+      // Resets this group's members back to rule-based classification --
+      // useful after manually picking a category (which marks them
+      // "manual" and makes reclassifyAll() skip them from then on, e.g.
+      // after adding/editing a rule elsewhere) when the user wants this
+      // group governed by the current rules again instead of staying
+      // stuck on an earlier manual choice.
+      var tdReclass = document.createElement("td");
+      var reclassBtn = document.createElement("button");
+      reclassBtn.className = "btn btn-ghost btn-sm";
+      reclassBtn.type = "button";
+      reclassBtn.textContent = "再分類";
+      reclassBtn.title = "手動で設定したカテゴリを取り消し、現在のルールで自動分類し直します";
+      reclassBtn.addEventListener("click", function () {
+        g.members.forEach(function (t) {
+          var r = classify(t.description);
+          t.category = r.category;
+          t.subcategory = r.subcategory;
+          t.manual = false;
+        });
+        renderAll();
+      });
+      tdReclass.appendChild(reclassBtn);
+
+      // Removes this group's transactions from the current session's
+      // working set entirely -- for OCR noise that isn't a real
+      // transaction at all (e.g. a leaked document title or page-footer
+      // fragment misread as a row), which no category even applies to.
+      // Non-destructive to the source data: paste-area text and the
+      // uploaded file are untouched, so re-running "分類する" rebuilds
+      // the full list again if this was clicked by mistake.
+      var tdDelete = document.createElement("td");
+      var delBtn = document.createElement("button");
+      delBtn.className = "btn btn-ghost btn-sm btn-danger";
+      delBtn.type = "button";
+      delBtn.textContent = "削除";
+      delBtn.title = "この内容の取引をすべて一覧から削除します（取引ではないノイズ行の除去用）";
+      delBtn.addEventListener("click", function () {
+        if (!confirm("「" + g.desc + "」（" + g.count + "件）を一覧から削除します。よろしいですか？")) return;
+        var memberIds = {};
+        g.members.forEach(function (t) { memberIds[t.id] = true; });
+        transactions = transactions.filter(function (t) { return !memberIds[t.id]; });
+        renderAll();
+      });
+      tdDelete.appendChild(delBtn);
+
+      tr.appendChild(tdDesc); tr.appendChild(tdCount); tr.appendChild(tdTotal); tr.appendChild(tdCat); tr.appendChild(tdAction); tr.appendChild(tdReclass); tr.appendChild(tdDelete);
       tbody.appendChild(tr);
 
       var panelRow = document.createElement("tr");
       panelRow.style.display = "none";
       panelRow.dataset.groupPanelFor = groupKey;
       var panelCell = document.createElement("td");
-      panelCell.colSpan = 5;
+      panelCell.colSpan = 7;
       var panel = document.createElement("div");
       panel.className = "inline-rule-panel";
       var kwInput = document.createElement("input"); kwInput.type = "text"; kwInput.value = g.desc;
