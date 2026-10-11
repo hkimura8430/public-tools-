@@ -21,6 +21,9 @@
     --series-other: #9c9b95;
     --good: #0ca30c;
     --danger: #d03b3b;
+    --preview-date: #7c5cff;
+    --preview-desc: #0ea16f;
+    --preview-amount: #c98a00;
   }
   @media (prefers-color-scheme: dark) {
     :root:where(:not([data-theme="light"])) .viz-root {
@@ -36,6 +39,9 @@
       --series-fixed: #3987e5;
       --series-fun: #d95926;
       --series-other: #7d7b74;
+      --preview-date: #9b82ff;
+      --preview-desc: #2fcf93;
+      --preview-amount: #e0a83c;
     }
   }
   :root[data-theme="dark"] .viz-root {
@@ -51,6 +57,9 @@
     --series-fixed: #3987e5;
     --series-fun: #d95926;
     --series-other: #7d7b74;
+    --preview-date: #9b82ff;
+    --preview-desc: #2fcf93;
+    --preview-amount: #e0a83c;
   }
 
   * { box-sizing: border-box; }
@@ -112,7 +121,8 @@
 
   .hint { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
 
-  /* Stat tiles */
+  /* Stat tiles (legacy grid layout -- no longer used by ②, kept in case
+     other markup still references it) */
   .stat-row { display:grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
   @media (max-width: 720px) { .stat-row { grid-template-columns: repeat(2, 1fr); } }
   .stat-tile { background: var(--page); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
@@ -127,11 +137,20 @@
   .legend-item { display:flex; align-items:center; gap: 6px; font-size: 12.5px; color: var(--text-secondary); }
   .legend-item .amt { color: var(--text-primary); font-weight: 600; margin-left: 2px; }
 
-  /* Composition bar */
-  .comp-bar { display:flex; height: 24px; border-radius: 4px; overflow: hidden; background: var(--surface-1); gap: 2px; }
-  .comp-seg { height: 100%; cursor: pointer; outline-offset: 2px; }
-  .comp-seg:focus-visible { outline: 2px solid var(--text-primary); }
-  .comp-seg:hover, .comp-seg:focus-visible { filter: brightness(1.08); }
+  /* ② Overall summary: pie chart on the left, a vertical stat list on the right */
+  .summary-row { display:flex; gap: 28px; align-items:center; flex-wrap: wrap; }
+  .pie-wrap { flex: 0 0 auto; }
+  .pie-wrap svg path, .pie-wrap svg circle { cursor:pointer; outline-offset: 2px; }
+  .pie-wrap svg path:focus-visible, .pie-wrap svg circle:focus-visible { outline: 2px solid var(--text-primary); }
+  .pie-wrap svg path:hover, .pie-wrap svg circle:hover,
+  .pie-wrap svg path:focus-visible, .pie-wrap svg circle:focus-visible { filter: brightness(1.08); }
+  .stat-list { display:flex; flex-direction:column; gap: 10px; flex: 1 1 240px; min-width: 220px; }
+  .stat-line { display:flex; align-items:baseline; justify-content:space-between; gap:14px; padding:12px 16px; background: var(--page); border: 1px solid var(--border); border-radius: 10px; }
+  .stat-line.hero { background: var(--surface-1); }
+  .stat-line .label { font-size: 13px; color: var(--text-secondary); display:flex; align-items:center; gap:6px; }
+  .stat-line .value { font-size: 18px; font-weight: 600; white-space: nowrap; }
+  .stat-line.hero .value { font-size: 25px; }
+  .stat-line .share { font-size: 11.5px; color: var(--text-muted); margin-left: 8px; }
 
   /* Subcategory bars */
   .subcat-row { display:grid; grid-template-columns: 128px 1fr 88px; align-items:center; gap: 10px; margin-bottom: 10px; }
@@ -170,6 +189,15 @@
   .table-scroll { max-height: 420px; overflow-y: auto; border: 1px solid var(--gridline); border-radius: 10px; }
   .table-scroll table { }
   .table-scroll thead th { position: sticky; top:0; background: var(--surface-1); }
+
+  /* ① Preview table: tints the whole column currently picked as date/content/
+     amount, so a dropdown choice is visually confirmed against the real data
+     instead of needing to count commas in the raw pasted text. */
+  #preview-table th.col-highlight-date, #preview-table td.col-highlight-date { background: color-mix(in srgb, var(--preview-date) 16%, transparent); }
+  #preview-table th.col-highlight-desc, #preview-table td.col-highlight-desc { background: color-mix(in srgb, var(--preview-desc) 16%, transparent); }
+  #preview-table th.col-highlight-amount, #preview-table td.col-highlight-amount { background: color-mix(in srgb, var(--preview-amount) 16%, transparent); }
+  #preview-table th.col-highlight-date, #preview-table th.col-highlight-desc, #preview-table th.col-highlight-amount { color: var(--text-primary); }
+  #preview-table td { white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 
   .badge { display:inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
   .badge-fixed { background: color-mix(in srgb, var(--series-fixed) 18%, transparent); color: var(--series-fixed); }
@@ -268,6 +296,22 @@
       </label>
     </div>
 
+    <div style="margin-top:16px; display:none;" id="preview-table-wrap">
+      <label class="field">読み取り内容のプレビュー
+        <span class="hint" style="display:inline-flex; align-items:center; gap:10px; margin-left:8px;">
+          <span><span class="swatch" style="background:var(--preview-date);"></span> 日付の列</span>
+          <span><span class="swatch" style="background:var(--preview-desc);"></span> 内容の列</span>
+          <span><span class="swatch" style="background:var(--preview-amount);"></span> 金額の列</span>
+        </span>
+      </label>
+      <div class="table-scroll" style="max-height:280px;">
+        <table class="data-table" id="preview-table">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="row" style="margin-top:16px;">
       <button class="btn btn-primary" id="classify-btn" type="button">分類する</button>
       <span class="hint" id="parse-status"></span>
@@ -280,11 +324,9 @@
 
     <div class="card">
       <h2>② 全体サマリー <span class="sub" id="period-label"></span></h2>
-      <div class="stat-row" id="stat-tiles"></div>
-
-      <div style="margin-top:20px;">
-        <div class="comp-bar" id="comp-bar"></div>
-        <div class="legend" id="comp-legend"></div>
+      <div class="summary-row">
+        <div class="pie-wrap" id="pie-chart"></div>
+        <div class="stat-list" id="stat-tiles"></div>
       </div>
     </div>
 

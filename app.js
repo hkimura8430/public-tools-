@@ -742,6 +742,35 @@
     return null;
   }
 
+  // A single misread digit can still assemble into a numerically-valid but
+  // wrong date even with the targeted pattern-matching above (e.g. OCR
+  // noise in an otherwise-fine row happens to shift a "02" into something
+  // parseIsolatedDateColumnLine reads as "10"). A single statement's
+  // transactions are always tightly clustered in time (usually a ~1 month
+  // billing period, occasionally spilling a few days into the adjacent
+  // month), so a date sitting months away from where every other date in
+  // the same column landed is far more likely an isolated misread than a
+  // genuine outlier transaction -- blank it out rather than risk shipping
+  // a confidently-wrong month into the monthly chart.
+  var DATE_OUTLIER_MAX_MONTH_GAP = 1;
+  function rejectOutlierDates(parsedDates) {
+    var monthCounts = {};
+    parsedDates.forEach(function (dp) {
+      if (!dp) return;
+      var key = dp.year * 12 + (dp.month - 1); // absolute month index, so gaps compare correctly across a year boundary
+      monthCounts[key] = (monthCounts[key] || 0) + 1;
+    });
+    var keys = Object.keys(monthCounts);
+    if (keys.length < 2) return parsedDates; // nothing to compare against
+    var modeKey = null, modeCount = 0;
+    keys.forEach(function (k) { if (monthCounts[k] > modeCount) { modeCount = monthCounts[k]; modeKey = +k; } });
+    return parsedDates.map(function (dp) {
+      if (!dp) return dp;
+      var key = dp.year * 12 + (dp.month - 1);
+      return Math.abs(key - modeKey) <= DATE_OUTLIER_MAX_MONTH_GAP ? dp : null;
+    });
+  }
+
   function cleanAmountColumnLine(raw) {
     var s = fixOcrThousands(normalizeText(String(raw || "")).trim());
     var m = s.match(AMOUNT_TOKEN_RE);
@@ -845,6 +874,7 @@
     // the amount column and an unfixed value would silently parse wrong
     // (e.g. "21.800" read as a 21.8 decimal instead of 21,800 yen).
     var dateAligned = leftLines.slice(Math.max(0, leftLines.length - n)).map(parseIsolatedDateColumnLine);
+    dateAligned = rejectOutlierDates(dateAligned);
     colLines[leftIdx] = dateAligned.map(function (dp) { return dp ? (dp.year + "/" + dp.month + "/" + dp.day) : ""; });
     validIdx.forEach(function (idx) {
       if (idx === leftIdx) return;
@@ -1132,6 +1162,76 @@
     if (guess.amountCol !== null) document.getElementById("col-amount").value = guess.amountCol;
   }
 
+  // Renders the actually-parsed rows as a real table (header row + data
+  // rows, one cell per column) instead of leaving the user to eyeball
+  // commas in the raw pasted/OCR'd text to figure out which column is
+  // which. Capped to a sample of rows -- this is for visually confirming
+  // the column layout, not for browsing every row (section ⑦ already
+  // covers that).
+  var PREVIEW_MAX_ROWS = 30;
+  function renderPreviewTable(headerRow, hasHeader, numCols) {
+    var wrap = document.getElementById("preview-table-wrap");
+    var table = document.getElementById("preview-table");
+    var thead = table.querySelector("thead");
+    var tbody = table.querySelector("tbody");
+    thead.innerHTML = ""; tbody.innerHTML = "";
+    if (!lastRawRows.length || !numCols) { wrap.style.display = "none"; return; }
+    wrap.style.display = "block";
+
+    var headTr = document.createElement("tr");
+    for (var c = 0; c < numCols; c++) {
+      var th = document.createElement("th");
+      th.textContent = (hasHeader && headerRow[c]) ? headerRow[c] : ("列" + (c + 1));
+      th.dataset.col = c;
+      headTr.appendChild(th);
+    }
+    thead.appendChild(headTr);
+
+    var dataRows = hasHeader ? lastRawRows.slice(1) : lastRawRows;
+    dataRows.slice(0, PREVIEW_MAX_ROWS).forEach(function (r) {
+      var tr = document.createElement("tr");
+      for (var c = 0; c < numCols; c++) {
+        var td = document.createElement("td");
+        td.textContent = r[c] || "";
+        td.title = r[c] || "";
+        td.dataset.col = c;
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    });
+    if (dataRows.length > PREVIEW_MAX_ROWS) {
+      var moreTr = document.createElement("tr");
+      var moreTd = document.createElement("td");
+      moreTd.colSpan = numCols;
+      moreTd.className = "hint";
+      moreTd.style.whiteSpace = "normal";
+      moreTd.textContent = "...ほか " + (dataRows.length - PREVIEW_MAX_ROWS) + " 行（分類には全行が使われます）";
+      moreTr.appendChild(moreTd);
+      tbody.appendChild(moreTr);
+    }
+    updatePreviewHighlight();
+  }
+
+  // Tints the whole column currently selected in the 日付/内容/金額 pickers
+  // so picking a column and seeing it highlighted in the preview table is
+  // one glance, not a separate lookup. Re-run on every picker change --
+  // cheap (just toggling classes on already-built cells), no re-parse.
+  function updatePreviewHighlight() {
+    var table = document.getElementById("preview-table");
+    if (!table) return;
+    var dateCol = document.getElementById("col-date").value;
+    var descCol = document.getElementById("col-desc").value;
+    var amountCol = document.getElementById("col-amount").value;
+    Array.prototype.forEach.call(table.querySelectorAll("th, td"), function (cell) {
+      cell.classList.remove("col-highlight-date", "col-highlight-desc", "col-highlight-amount");
+      var c = cell.dataset.col;
+      if (c === undefined) return; // the "...ほかN行" row's colspan cell has no column
+      if (c === dateCol) cell.classList.add("col-highlight-date");
+      else if (c === descCol) cell.classList.add("col-highlight-desc");
+      else if (c === amountCol) cell.classList.add("col-highlight-amount");
+    });
+  }
+
   function getInputText(cb) {
     var pasted = document.getElementById("paste-area").value;
     if (pasted && pasted.trim()) { cb(pasted); return; }
@@ -1158,6 +1258,7 @@
       var dataRows = hasHeader ? rowsAll.slice(1) : rowsAll;
       var guess = detectColumns(dataRows.slice(0, 60));
       rebuildColumnSelects(rowsAll[0], hasHeader, guess);
+      renderPreviewTable(rowsAll[0], hasHeader, guess.numCols);
       status.textContent = rowsAll.length + " 行読み込みました（列は必要に応じて選び直してください）";
     });
   }
@@ -1268,52 +1369,78 @@
     return { totals: totals, sub: sub, monthly: monthly, minDate: minDate, maxDate: maxDate };
   }
 
+  // Vertical list to the right of the ② pie chart: total first, then one
+  // line per category with its amount and share.
   function renderStatTiles(totals, total) {
     var wrap = document.getElementById("stat-tiles");
     wrap.innerHTML = "";
     var hero = document.createElement("div");
-    hero.className = "stat-tile hero";
+    hero.className = "stat-line hero";
     hero.innerHTML = '<div class="label">総支出</div><div class="value">' + yen(total) + "</div>";
     wrap.appendChild(hero);
     CAT_ORDER.forEach(function (key) {
       var c = CATS[key];
       var v = totals[key];
-      var tile = document.createElement("div");
-      tile.className = "stat-tile";
+      var line = document.createElement("div");
+      line.className = "stat-line";
       var share = total ? v / total : 0;
-      tile.innerHTML =
+      line.innerHTML =
         '<div class="label"><span class="swatch" style="background:' + c.color + '"></span>' + c.label + "</div>" +
-        '<div class="value">' + yen(v) + "</div>" +
-        '<div class="share">全体の ' + pct(share) + "</div>";
-      wrap.appendChild(tile);
+        '<div class="value">' + yen(v) + '<span class="share">' + pct(share) + "</span></div>";
+      wrap.appendChild(line);
     });
   }
 
+  // ② pie chart: one SVG <path> wedge per non-zero category (a plain
+  // <circle> for the degenerate "100% one category" case, since an arc
+  // path can't represent a full circle). Built as separate elements rather
+  // than a single CSS conic-gradient so each wedge can still carry its own
+  // hover/focus tooltip, the same interaction every other chart in this
+  // tool already uses.
   function renderComposition(totals, total) {
-    var bar = document.getElementById("comp-bar");
-    var legend = document.getElementById("comp-legend");
-    bar.innerHTML = ""; legend.innerHTML = "";
-    CAT_ORDER.forEach(function (key) {
-      var c = CATS[key];
-      var v = totals[key];
-      if (v <= 0) return;
-      var share = total ? v / total : 0;
-      var seg = document.createElement("div");
-      seg.className = "comp-seg";
-      seg.style.background = c.color;
-      seg.style.flex = "0 0 " + Math.max(share * 100, 0.5) + "%";
-      seg.tabIndex = 0;
-      wireTooltip(seg, function () { return [{ color: c.color, value: yen(v), label: c.label + "（" + pct(share) + "）" }]; });
-      bar.appendChild(seg);
+    var wrap = document.getElementById("pie-chart");
+    wrap.innerHTML = "";
+    var nonZero = CAT_ORDER.filter(function (key) { return totals[key] > 0; });
+    if (!nonZero.length || !total) return;
 
-      var li = document.createElement("div");
-      li.className = "legend-item";
-      var sw = document.createElement("span"); sw.className = "swatch"; sw.style.background = c.color;
-      var txt = document.createElement("span"); txt.textContent = c.label;
-      var amt = document.createElement("span"); amt.className = "amt"; amt.textContent = yen(v) + "（" + pct(share) + "）";
-      li.appendChild(sw); li.appendChild(txt); li.appendChild(amt);
-      legend.appendChild(li);
-    });
+    var svgNS = "http://www.w3.org/2000/svg";
+    var size = 180, cx = size / 2, cy = size / 2, r = size / 2 - 4;
+    var svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("viewBox", "0 0 " + size + " " + size);
+    svg.setAttribute("width", size);
+    svg.setAttribute("height", size);
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", "カテゴリ別支出の割合");
+
+    if (nonZero.length === 1) {
+      var onlyKey = nonZero[0];
+      var circle = document.createElementNS(svgNS, "circle");
+      circle.setAttribute("cx", cx); circle.setAttribute("cy", cy); circle.setAttribute("r", r);
+      circle.setAttribute("fill", CATS[onlyKey].color);
+      circle.tabIndex = 0;
+      wireTooltip(circle, function () { return [{ color: CATS[onlyKey].color, value: yen(totals[onlyKey]), label: CATS[onlyKey].label + "（100.0%）" }]; });
+      svg.appendChild(circle);
+    } else {
+      var angle = -Math.PI / 2; // start at 12 o'clock, sweep clockwise
+      nonZero.forEach(function (key) {
+        var v = totals[key];
+        var share = v / total;
+        var sweep = share * 2 * Math.PI;
+        var endAngle = angle + sweep;
+        var x1 = cx + r * Math.cos(angle), y1 = cy + r * Math.sin(angle);
+        var x2 = cx + r * Math.cos(endAngle), y2 = cy + r * Math.sin(endAngle);
+        var largeArc = sweep > Math.PI ? 1 : 0;
+        var d = "M" + cx + "," + cy + " L" + x1 + "," + y1 + " A" + r + "," + r + " 0 " + largeArc + " 1 " + x2 + "," + y2 + " Z";
+        var path = document.createElementNS(svgNS, "path");
+        path.setAttribute("d", d);
+        path.setAttribute("fill", CATS[key].color);
+        path.tabIndex = 0;
+        wireTooltip(path, function () { return [{ color: CATS[key].color, value: yen(v), label: CATS[key].label + "（" + pct(share) + "）" }]; });
+        svg.appendChild(path);
+        angle = endAngle;
+      });
+    }
+    wrap.appendChild(svg);
   }
 
   function renderSubcatChart(sub, total) {
@@ -1852,6 +1979,9 @@
   });
   document.getElementById("encoding-select").addEventListener("change", analyzeInput);
   document.getElementById("has-header").addEventListener("change", analyzeInput);
+  ["col-date", "col-desc", "col-amount"].forEach(function (id) {
+    document.getElementById(id).addEventListener("change", updatePreviewHighlight);
+  });
   document.getElementById("classify-btn").addEventListener("click", runClassification);
   document.getElementById("tx-search").addEventListener("input", function () { renderTransactionsTable(); });
   document.getElementById("export-csv").addEventListener("click", exportCSV);
