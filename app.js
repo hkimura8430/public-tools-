@@ -752,26 +752,25 @@
     return clean;
   }
 
-  // Crops out the date/description/amount columns of a detected table
-  // region and OCRs each in isolation, then reassembles rows by position.
-  // The date column is always leftmost in every real-world layout seen so
-  // far, and the description column is reliably the widest of all (store
-  // names need the most horizontal room) -- both picked geometrically, no
-  // extra OCR needed. The amount column is harder to guess by width alone:
-  // a free-text "摘要/remarks" column (foreign-currency conversion notes,
-  // etc.) is often WIDER than the real amount column, so picking "widest
-  // column to the right of description" picks remarks instead on some real
-  // statements. Instead, OCR candidate columns right-of-description in
-  // width-descending order and keep the first one that (a) mostly parses as
-  // amounts AND (b) has close to one line per transaction. The row-count
-  // reference for (b) is the DATE column, not description: a date like
-  // "26 02 26" never wraps regardless of column width, so it reliably has
-  // exactly one OCR line per transaction, while a store name can wrap across
-  // multiple lines in a narrow description column and a remarks column
-  // produces sporadic multi-line blocks -- both would be unreliable anchors.
-  async function extractTableByGridlines(worker, canvas, region) {
+  // Crops out EVERY column of a detected table region and OCRs each one in
+  // isolation (so cells never bleed into each other the way a whole-line OCR
+  // pass can), then hands back the raw per-column text for every row --
+  // deliberately NOT guessing which column is the date/description/amount.
+  // An earlier version of this function tried to guess those roles
+  // geometrically (leftmost = date, widest = description, etc.), which
+  // worked well on the statement layouts it was tuned against but silently
+  // misfired on others: a free-text remarks column, a summary line that
+  // happened to sit inside the same bordered region, or a format this app
+  // has simply never seen before could all get mis-slotted into "amount" or
+  // "description" with no way for the user to notice or correct it. Handing
+  // back every column instead lets the existing date/content/amount column
+  // pickers in section ① do that job -- the same pickers already used for a
+  // manually pasted CSV -- so the user can see and fix a wrong guess instead
+  // of trusting one silently, and a statement layout this function has never
+  // encountered still works as long as its table has real border lines.
+  async function extractTableRawColumns(worker, canvas, region) {
     var lines = region.lines;
-    if (lines.length < 4) return null;
+    if (lines.length < 3) return null; // need at least 2 real columns
     var cols = [];
     for (var i = 0; i < lines.length - 1; i++) {
       var x0 = lines[i].end + 2;
@@ -780,98 +779,138 @@
     }
     var validIdx = [];
     for (var ci = 0; ci < cols.length; ci++) if (cols[ci]) validIdx.push(ci);
-    if (validIdx.length < 3) return null;
+    if (validIdx.length < 2) return null;
 
-    var dateIdx = validIdx[0];
-    var descIdx = validIdx.reduce(function (best, idx) { return cols[idx].width > cols[best].width ? idx : best; }, validIdx[0]);
-    var rightOfDesc = validIdx.filter(function (idx) { return idx > descIdx; });
-    var amountCandidateIdx = (rightOfDesc.length ? rightOfDesc : validIdx.filter(function (idx) { return idx !== dateIdx && idx !== descIdx; }))
-      .slice()
-      .sort(function (a, b) { return cols[b].width - cols[a].width; })
-      .slice(0, 4); // cap attempts so a pathological layout can't balloon OCR calls
-    if (!amountCandidateIdx.length) return null;
-
-    var dateLines = await ocrColumnLines(worker, canvas, cols[dateIdx].x0, region.yTop, cols[dateIdx].x1, region.yBottom);
-    var descLines = await ocrColumnLines(worker, canvas, cols[descIdx].x0, region.yTop, cols[descIdx].x1, region.yBottom);
-    if (!dateLines.length || !descLines.length) return null;
-
-    // The row count can't be anchored to the date OR the description column
-    // -- either one can independently be unreliable on a real statement (a
-    // date column can OCR as near-total noise on a dense page even when
-    // amounts next to it read fine, the way an "amount-only" OCR fallback
-    // mode already has to tolerate elsewhere in this file; a description
-    // column can wrap long store names across multiple OCR lines, inflating
-    // its own count well past the real transaction total). What IS reliable
-    // is that a real statement usually repeats the same amount under two
-    // different headings (e.g. "ご利用金額" and "今回のお支払金額" for a
-    // one-time payment, or "利用金額" and "支払総額"), so independent amount
-    // candidates that both measure real transactions will agree with each
-    // other on how many rows there are, while a free-text remarks column's
-    // sporadic multi-line blocks won't coincidentally match that count too.
-    // So: OCR every width-ranked candidate, then trust whichever row count
-    // the largest number of good-hit-rate candidates agree on.
-    var results = [];
-    for (var aci = 0; aci < amountCandidateIdx.length; aci++) {
-      var candIdx = amountCandidateIdx[aci];
-      var candLines = await ocrColumnLines(worker, canvas, cols[candIdx].x0, region.yTop, cols[candIdx].x1, region.yBottom);
-      var candParsed = candLines.map(cleanAmountColumnLine);
-      var candHits = candParsed.filter(Boolean).length;
-      results.push({
-        idx: candIdx, lines: candLines, parsed: candParsed, count: candLines.length,
-        rate: candLines.length ? candHits / candLines.length : 0
-      });
+    var colLines = {};
+    for (var vi = 0; vi < validIdx.length; vi++) {
+      var idx = validIdx[vi];
+      colLines[idx] = await ocrColumnLines(worker, canvas, cols[idx].x0, region.yTop, cols[idx].x1, region.yBottom);
     }
-    var qualifying = results.filter(function (r) { return r.count >= 2 && r.rate >= 0.7; });
-    if (!qualifying.length) return null;
-    var groupsByCount = {};
-    qualifying.forEach(function (r) { (groupsByCount[r.count] = groupsByCount[r.count] || []).push(r); });
-    var bestGroup = null;
-    Object.keys(groupsByCount).forEach(function (k) {
-      var g = groupsByCount[k];
-      if (!bestGroup || g.length > bestGroup.length || (g.length === bestGroup.length && g[0].count > bestGroup[0].count)) bestGroup = g;
-    });
-    bestGroup.sort(function (a, b) { return b.rate - a.rate; });
-    var winner = bestGroup[0];
-    var amountIdx = winner.idx, amountParsed = winner.parsed;
-    var n = winner.count;
 
-    // Now that the real transaction count is known, sanity-check the
-    // description column against it: far more lines means store names are
-    // wrapping (a simple trailing-slice realignment below would then pair
-    // the wrong description with the wrong amount for every row after the
-    // first wrap), and far fewer means something else went wrong -- either
-    // way, safer to concede this page to the whole-line fallback than ship
-    // misaligned data.
-    if (descLines.length > n * 1.5 || descLines.length < n * 0.5) return null;
-
-    // A column header row sometimes ends up inside the detected region with
-    // no distinct divider line to key off of (so the earlier boundary
-    // refinement can't trim it) -- but unlike real data, its cells don't
-    // parse as dates. Drop any leading lines that don't, capped to a
-    // handful: a real header is always short, so if removing unparseable
-    // leading lines would drain more than that, the date column probably
-    // just OCR'd badly throughout this page rather than having a long
-    // header -- in that case leave it alone and let per-row dates come out
-    // blank further down instead of over-trimming real data away.
+    // The leftmost column is the date column in every layout seen so far.
+    // Some layouts put the column header ("利用日" etc.) inside the same
+    // bordered grid with no divider line to key off of, so it ends up as
+    // extra leading lines here -- drop any that don't parse as a date,
+    // capped to a handful (a real header is always short; past that, the
+    // column probably just OCR'd badly throughout rather than having a
+    // long header, so leave the rest alone instead of over-trimming).
+    var leftIdx = validIdx[0];
+    var leftLines = colLines[leftIdx].slice();
     var trimmed = 0;
-    while (dateLines.length && trimmed < 6 && !parseIsolatedDateColumnLine(dateLines[0])) { dateLines.shift(); trimmed++; }
+    while (leftLines.length && trimmed < 6 && !parseIsolatedDateColumnLine(leftLines[0])) { leftLines.shift(); trimmed++; }
+    colLines[leftIdx] = leftLines;
+    var leftParsed = leftLines.map(parseIsolatedDateColumnLine);
+    var leftHits = leftParsed.filter(Boolean).length;
 
-    var dateAligned = dateLines.slice(Math.max(0, dateLines.length - n));
-    var descAligned = descLines.slice(Math.max(0, descLines.length - n));
-    var amountAligned = amountParsed;
+    // The row count needs to be determined reliably. Prefer the date
+    // column's own (now header-trimmed) count when most of its lines
+    // actually parsed as dates -- it's the most direct signal once cleaned
+    // of header noise, and unlike a description column it never wraps
+    // across multiple OCR lines regardless of column width. Only fall back
+    // to cross-column agreement (numeric-looking columns that hold one
+    // value per transaction, typically an amount repeated under two
+    // different headings on a real statement, tend to agree with each
+    // other on the row count) when the date column itself came out too
+    // noisy to trust -- this was seen on a real statement page dense
+    // enough that even column-isolated OCR couldn't read the dates cleanly
+    // while the amount columns right next to them still read fine.
+    var n = null;
+    if (leftLines.length >= 2 && leftHits / leftLines.length >= 0.7) {
+      n = leftLines.length;
+    } else {
+      var numericResults = validIdx.map(function (idx) {
+        var ls = colLines[idx];
+        var parsed = ls.map(cleanAmountColumnLine);
+        var hits = parsed.filter(Boolean).length;
+        return { idx: idx, count: ls.length, rate: ls.length ? hits / ls.length : 0 };
+      });
+      var qualifying = numericResults.filter(function (r) { return r.count >= 2 && r.rate >= 0.7; });
+      n = pickConsensusCount(qualifying);
+      if (!n) {
+        // No numeric column at all (an all-text table) -- fall back to
+        // whichever non-trivial line count the most columns share.
+        n = pickConsensusCount(validIdx.map(function (idx) { return { count: colLines[idx].length }; }).filter(function (r) { return r.count >= 2; }));
+      }
+    }
+    if (!n || n < 2) return null;
+
+    // Build the final per-column values: the date column gets normalized
+    // ("2026/2/26" instead of raw OCR text like "26102126") so it's
+    // actually usable by the existing date parser once the user picks it
+    // as the date column downstream -- the raw digit string doesn't match
+    // any format that parser recognizes. Every other column keeps its raw
+    // OCR text (so the user can see and judge it), but still gets the same
+    // comma/period misread fix ("21.800" -> "21,800") already applied
+    // elsewhere to OCR'd amounts, since the user may pick any of them as
+    // the amount column and an unfixed value would silently parse wrong
+    // (e.g. "21.800" read as a 21.8 decimal instead of 21,800 yen).
+    var dateAligned = leftLines.slice(Math.max(0, leftLines.length - n)).map(parseIsolatedDateColumnLine);
+    colLines[leftIdx] = dateAligned.map(function (dp) { return dp ? (dp.year + "/" + dp.month + "/" + dp.day) : ""; });
+    validIdx.forEach(function (idx) {
+      if (idx === leftIdx) return;
+      var ls = colLines[idx].slice(Math.max(0, colLines[idx].length - n));
+      colLines[idx] = ls.map(function (v) { return fixOcrThousands(v); });
+    });
 
     var rows = [];
+    var filledCells = 0;
     for (var r = 0; r < n; r++) {
-      var amt = amountAligned[r];
-      if (!amt) continue;
-      var dp = parseIsolatedDateColumnLine(dateAligned[r]);
-      rows.push({
-        date: dp ? (dp.year + "/" + dp.month + "/" + dp.day) : "",
-        desc: descAligned[r] || "(内容不明)",
-        amount: amt
-      });
+      var rowVals = validIdx.map(function (idx) { return colLines[idx][r] || ""; });
+      if (rowVals.every(function (v) { return !v; })) continue; // fully blank row
+      // Drop rows that are clearly a summary/disclaimer line rather than a
+      // transaction (e.g. "ご請求金額", "お支払い口座") that happened to sit
+      // inside the same bordered region as the real table -- the same
+      // keyword check already used for the whole-line OCR fallback, applied
+      // across this row's columns together instead of one OCR'd line.
+      var joined = rowVals.join(" ");
+      if (NON_TX_RE.test(joined) || NON_TX_RE.test(joined.replace(/\s+/g, ""))) continue;
+      filledCells += rowVals.filter(Boolean).length;
+      rows.push(rowVals);
     }
-    return rows.length >= 2 ? rows : null;
+    if (rows.length < 2) return null;
+    // A mostly-blank result (seen in testing on a payment-plan summary
+    // table with lots of unused cells, e.g. no revolving balance to show)
+    // means the row count the logic above landed on doesn't actually
+    // correspond to real transaction rows -- a couple of near-empty rows
+    // slipping past the NON_TX_RE check isn't worth keeping over conceding
+    // this page to the whole-line fallback.
+    var avgFilled = filledCells / (rows.length * validIdx.length);
+    if (avgFilled < 0.3) return null;
+    return { rows: rows, numCols: validIdx.length };
+  }
+
+  // Given candidates with a .count, returns the count value shared by the
+  // most candidates (ties broken toward the larger count, since OCR more
+  // often drops a line than invents one).
+  function pickConsensusCount(candidates) {
+    if (!candidates.length) return null;
+    var groups = {};
+    candidates.forEach(function (r) { (groups[r.count] = groups[r.count] || []).push(r); });
+    var bestCount = null, bestSize = 0;
+    Object.keys(groups).forEach(function (k) {
+      var size = groups[k].length;
+      if (size > bestSize || (size === bestSize && +k > bestCount)) { bestSize = size; bestCount = +k; }
+    });
+    return bestCount;
+  }
+
+  // Builds a plain CSV from raw per-column OCR rows, with a generic "列N"
+  // header so the existing column pickers have something to show instead of
+  // a bare index -- there's no way to know which column is semantically
+  // which without the user's input, by design (see extractTableRawColumns).
+  function rawColumnsToCsvText(rows, numCols) {
+    var header = [];
+    for (var c = 0; c < numCols; c++) header.push("列" + (c + 1));
+    var out = [header.join(",")];
+    rows.forEach(function (r) {
+      var fields = [];
+      for (var c = 0; c < numCols; c++) {
+        var v = r[c] === undefined ? "" : String(r[c]);
+        fields.push(/[,"\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v);
+      }
+      out.push(fields.join(","));
+    });
+    return out.join("\n");
   }
 
   async function runOcr(file) {
@@ -915,6 +954,9 @@
       var allLines = [];
       var allRows = [];
       var anyAmountOnly = false;
+      var rawColumnRows = [];
+      var rawNumCols = 0;
+      var anyGridlineSuccess = false;
       for (var p = 1; p <= pdf.numPages; p++) {
         progressEl.textContent = "ページ " + p + "/" + pdf.numPages + " を画像化しています...";
         var page = await pdf.getPage(p);
@@ -929,22 +971,26 @@
         preprocessCanvasForOcr(ctx, canvas.width, canvas.height);
 
         // Prefer cropping out the table's own columns (via its border lines)
-        // and OCRing date/content/amount separately -- far more accurate
-        // than reading a whole row as one string and guessing where the
-        // cells split, since it can't merge neighboring cells together. If
-        // this page has no reliably-bordered table (a summary page, or an
-        // unrecognized layout), region/gridRows end up null and we fall back
-        // to the original whole-line approach unchanged below.
+        // and OCRing each in isolation -- far more accurate than reading a
+        // whole row as one string, since it can't merge neighboring cells
+        // together. Which column is the date/content/amount is NOT guessed
+        // here (see extractTableRawColumns for why) -- that's left to the
+        // same column pickers used for a manually pasted CSV. If this page
+        // has no reliably-bordered table (a summary page, or an
+        // unrecognized layout), region/rawResult end up null and this page
+        // falls back to the original whole-line approach unchanged below.
         var region = null;
         try { region = detectTableRegion(ctx, canvas.width, canvas.height); } catch (e) { region = null; }
-        var gridRows = null;
+        var rawResult = null;
         if (region) {
           progressEl.textContent = "ページ " + p + "/" + pdf.numPages + " の表の列を認識中...";
-          try { gridRows = await extractTableByGridlines(worker, canvas, region); } catch (e) { gridRows = null; }
+          try { rawResult = await extractTableRawColumns(worker, canvas, region); } catch (e) { rawResult = null; }
         }
 
-        if (gridRows && gridRows.length) {
-          allRows = allRows.concat(gridRows);
+        if (rawResult && rawResult.rows.length) {
+          anyGridlineSuccess = true;
+          rawColumnRows = rawColumnRows.concat(rawResult.rows);
+          rawNumCols = Math.max(rawNumCols, rawResult.numCols);
         } else {
           progressEl.textContent = "ページ " + p + "/" + pdf.numPages + " を認識中...";
           var result = await worker.recognize(canvas);
@@ -960,6 +1006,27 @@
       await worker.terminate();
       worker = null;
       progressEl.textContent = "";
+
+      // If at least one page succeeded via the column-cropping path, use
+      // its raw (unlabeled) columns for the WHOLE document -- including
+      // folding in any other page's date/content/amount fallback rows as
+      // plain 3-column rows -- so nothing from a mixed-quality document
+      // gets silently dropped, and the user picks date/content/amount from
+      // whichever real columns came out, instead of this code guessing.
+      if (anyGridlineSuccess) {
+        allRows.forEach(function (r) { rawColumnRows.push([r.date, r.desc, r.amount]); });
+        rawNumCols = Math.max(rawNumCols, 3);
+        if (!rawColumnRows.length) {
+          status.textContent = "⚠ OCRでも取引らしき行を認識できませんでした。お手数ですがCSVでの入力をお試しください。";
+          return;
+        }
+        lastInputWasOcr = true;
+        document.getElementById("paste-area").value = rawColumnsToCsvText(rawColumnRows, rawNumCols);
+        analyzeInput();
+        status.textContent = "⚠ OCRで表の列を" + rawNumCols + "列、" + rawColumnRows.length + "行読み取りました。下の「日付の列」「内容の列」「金額の列」で、実際に日付・内容・金額に対応する列を確認・選択してから「分類する」を押してください（自動推定は参考程度です）。画像認識のため誤読の可能性があるので、内容を元のPDFと見比べてください。";
+        document.getElementById("ocr-offer").style.display = "none";
+        return;
+      }
 
       // Note: a page fully handled by the gridline/column path never adds to
       // allLines (it never runs the whole-page OCR call at all), so allLines
