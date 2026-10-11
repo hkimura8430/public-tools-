@@ -876,6 +876,18 @@
     // this page to the whole-line fallback.
     var avgFilled = filledCells / (rows.length * validIdx.length);
     if (avgFilled < 0.3) return null;
+
+    // Column header text (e.g. "ご利用日") isn't OCR'd for the output here.
+    // It was tried: on a real statement its header row sits right next to
+    // (sometimes touching) unrelated text above the data table -- a
+    // disclaimer sentence, a section title -- with no divider line this
+    // code can key off of to crop just the header cleanly. In testing,
+    // even after filtering out the worst of it (long run-on-sentence
+    // fragments), what was left still came out wrong often enough (e.g.
+    // one real column's header OCR'd as an unrelated short phrase from a
+    // nearby heading) to be a worse labeling source than the neutral "列N"
+    // placeholder rawColumnsToCsvText() falls back to -- a specific-looking
+    // but wrong label is more misleading than an honestly generic one.
     return { rows: rows, numCols: validIdx.length };
   }
 
@@ -898,6 +910,8 @@
   // header so the existing column pickers have something to show instead of
   // a bare index -- there's no way to know which column is semantically
   // which without the user's input, by design (see extractTableRawColumns).
+  // (OCRing the real header text, e.g. "ご利用日", was tried and dropped --
+  // see the comment at the end of extractTableRawColumns for why.)
   function rawColumnsToCsvText(rows, numCols) {
     var header = [];
     for (var c = 0; c < numCols; c++) header.push("列" + (c + 1));
