@@ -1030,18 +1030,14 @@
         panel.className = "inline-rule-panel";
         var kwInput = document.createElement("input"); kwInput.type = "text"; kwInput.value = t.description;
         var catSel = document.createElement("select");
-        CAT_ORDER.forEach(function (key) { var o = document.createElement("option"); o.value = key; o.textContent = CATS[key].label; catSel.appendChild(o); });
         var subSel = document.createElement("select");
-        function fillSub() {
-          subSel.innerHTML = "";
-          CATS[catSel.value].subs.forEach(function (s) { var o = document.createElement("option"); o.value = s; o.textContent = s; subSel.appendChild(o); });
-        }
-        catSel.addEventListener("change", fillSub); fillSub();
+        wireCategorySubcategorySelects(catSel, subSel);
         var saveBtn = document.createElement("button");
         saveBtn.className = "btn btn-primary btn-sm"; saveBtn.type = "button"; saveBtn.textContent = "ルールを保存";
         saveBtn.addEventListener("click", function () {
           var kw = kwInput.value.trim();
           if (!kw) return;
+          if (!catSel.value || !subSel.value) { alert("カテゴリとサブカテゴリを選択してください。"); return; }
           rules.push(withId({ keyword: kw, category: catSel.value, subcategory: subSel.value }));
           saveRules();
           reclassifyAll();
@@ -1085,17 +1081,31 @@
     });
   }
 
-  function fillNewRuleSelects() {
-    var catSel = document.getElementById("new-rule-category");
+  // Both selects start on an empty "-- 選択 --" placeholder so a rule can
+  // never be saved with an un-chosen category silently defaulting to the
+  // first option in the list (that previously caused rules to get created
+  // as "固定生活費/食費" whenever a user saved without picking anything).
+  function wireCategorySubcategorySelects(catSel, subSel) {
     catSel.innerHTML = "";
+    var catPlaceholder = document.createElement("option");
+    catPlaceholder.value = ""; catPlaceholder.textContent = "-- カテゴリを選択 --";
+    catSel.appendChild(catPlaceholder);
     CAT_ORDER.forEach(function (key) { var o = document.createElement("option"); o.value = key; o.textContent = CATS[key].label; catSel.appendChild(o); });
     function fillSub() {
-      var subSel = document.getElementById("new-rule-subcategory");
       subSel.innerHTML = "";
-      CATS[catSel.value].subs.forEach(function (s) { var o = document.createElement("option"); o.value = s; o.textContent = s; subSel.appendChild(o); });
+      var subPlaceholder = document.createElement("option");
+      subPlaceholder.value = ""; subPlaceholder.textContent = "-- サブカテゴリを選択 --";
+      subSel.appendChild(subPlaceholder);
+      if (catSel.value && CATS[catSel.value]) {
+        CATS[catSel.value].subs.forEach(function (s) { var o = document.createElement("option"); o.value = s; o.textContent = s; subSel.appendChild(o); });
+      }
     }
     catSel.addEventListener("change", fillSub);
     fillSub();
+  }
+
+  function fillNewRuleSelects() {
+    wireCategorySubcategorySelects(document.getElementById("new-rule-category"), document.getElementById("new-rule-subcategory"));
   }
 
   function renderAll(skipTxTable) {
@@ -1245,18 +1255,14 @@
       panel.className = "inline-rule-panel";
       var kwInput = document.createElement("input"); kwInput.type = "text"; kwInput.value = g.desc;
       var catSel = document.createElement("select");
-      CAT_ORDER.forEach(function (key) { var o = document.createElement("option"); o.value = key; o.textContent = CATS[key].label; catSel.appendChild(o); });
       var subSel = document.createElement("select");
-      function fillSub() {
-        subSel.innerHTML = "";
-        CATS[catSel.value].subs.forEach(function (s) { var o = document.createElement("option"); o.value = s; o.textContent = s; subSel.appendChild(o); });
-      }
-      catSel.addEventListener("change", fillSub); fillSub();
+      wireCategorySubcategorySelects(catSel, subSel);
       var saveBtn = document.createElement("button");
       saveBtn.className = "btn btn-primary btn-sm"; saveBtn.type = "button"; saveBtn.textContent = "ルールを保存";
       saveBtn.addEventListener("click", function () {
         var kw = kwInput.value.trim();
         if (!kw) return;
+        if (!catSel.value || !subSel.value) { alert("カテゴリとサブカテゴリを選択してください。"); return; }
         rules.push(withId({ keyword: kw, category: catSel.value, subcategory: subSel.value }));
         saveRules();
         reclassifyAll();
@@ -1383,6 +1389,7 @@
     if (!kw) return;
     var cat = document.getElementById("new-rule-category").value;
     var sub = document.getElementById("new-rule-subcategory").value;
+    if (!cat || !sub) { alert("カテゴリとサブカテゴリを選択してください。"); return; }
     rules.push(withId({ keyword: kw, category: cat, subcategory: sub }));
     saveRules();
     document.getElementById("new-rule-keyword").value = "";
