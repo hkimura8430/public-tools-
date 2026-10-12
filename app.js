@@ -1354,19 +1354,16 @@
   function computeTotals() {
     var totals = { fixed: 0, fun: 0, unknown: 0 };
     var sub = { fixed: {}, fun: {}, unknown: {} };
-    var monthly = {}; // key -> {fixed,fun,unknown}
     var minDate = null, maxDate = null;
     transactions.forEach(function (t) {
       totals[t.category] += t.amount;
       sub[t.category][t.subcategory] = (sub[t.category][t.subcategory] || 0) + t.amount;
       if (t.date) {
-        if (!monthly[t.date.key]) monthly[t.date.key] = { fixed: 0, fun: 0, unknown: 0 };
-        monthly[t.date.key][t.category] += t.amount;
         if (minDate === null || t.date.key < minDate) minDate = t.date.key;
         if (maxDate === null || t.date.key > maxDate) maxDate = t.date.key;
       }
     });
-    return { totals: totals, sub: sub, monthly: monthly, minDate: minDate, maxDate: maxDate };
+    return { totals: totals, sub: sub, minDate: minDate, maxDate: maxDate };
   }
 
   // Vertical list to the right of the ② pie chart: total first, then one
@@ -1443,100 +1440,97 @@
     wrap.appendChild(svg);
   }
 
-  function renderSubcatChart(sub, total) {
-    var container = document.getElementById("subcat-chart");
-    container.innerHTML = "";
-    var entries = [];
-    CAT_ORDER.forEach(function (key) {
-      Object.keys(sub[key]).forEach(function (name) {
-        var v = sub[key][name];
-        if (v > 0) entries.push({ catKey: key, name: name, value: v });
-      });
-    });
-    entries.sort(function (a, b) { return b.value - a.value; });
-    var max = entries.length ? entries[0].value : 1;
-    entries.forEach(function (e) {
-      var row = document.createElement("div");
-      row.className = "subcat-row";
-      var label = document.createElement("div");
-      label.className = "subcat-label";
-      label.textContent = e.name;
-      label.title = e.name;
-      var track = document.createElement("div");
-      track.className = "subcat-track";
-      var barEl = document.createElement("div");
-      barEl.className = "subcat-bar";
-      barEl.style.width = Math.max((e.value / max) * 100, 1.5) + "%";
-      barEl.style.background = CATS[e.catKey].color;
-      barEl.tabIndex = 0;
-      var share = total ? e.value / total : 0;
-      wireTooltip(barEl, function () {
-        return [{ color: CATS[e.catKey].color, value: yen(e.value), label: e.name + "（" + CATS[e.catKey].label + "・" + pct(share) + "）" }];
-      });
-      track.appendChild(barEl);
-      var valEl = document.createElement("div");
-      valEl.className = "subcat-value";
-      valEl.textContent = yen(e.value);
-      row.appendChild(label); row.appendChild(track); row.appendChild(valEl);
-      container.appendChild(row);
-    });
-    if (!entries.length) container.innerHTML = '<div class="hint">データがありません</div>';
+  // Every subcategory under the same parent category shares that parent's
+  // base color (used for ② and for this chart's own legend swatches), so a
+  // pie of subcategories can't just reuse CATS[key].color directly --
+  // adjacent same-colored wedges would be indistinguishable without a
+  // label squeezed onto every slice. These are shades of each parent's
+  // hue instead: still visually grouped as "part of 固定生活費" at a
+  // glance, but distinguishable from each other. Cycles if a custom rule
+  // ever produces more subcategories than a palette has shades for.
+  var SUBCAT_SHADE_PALETTE = {
+    fixed: ["#2a78d6", "#1a4f8f", "#4a93e8", "#7fb6f0", "#123a6b", "#a8d0f7"],
+    fun: ["#eb6834", "#b84a1a", "#f2894f", "#ffb183"],
+    unknown: ["#9c9b95", "#6f6e68", "#c2c1ba"]
+  };
+  function subcatColor(catKey, indexWithinCat) {
+    var palette = SUBCAT_SHADE_PALETTE[catKey] || [CATS[catKey] ? CATS[catKey].color : "#999"];
+    return palette[indexWithinCat % palette.length];
   }
 
-  function renderMonthly(monthly, minDate, maxDate) {
-    var card = document.getElementById("monthly-card");
-    var keys = Object.keys(monthly).sort();
-    if (!keys.length) { card.style.display = "none"; return; }
-    card.style.display = "block";
-    var unknownDateCount = transactions.filter(function (t) { return !t.date; }).length;
-    document.getElementById("monthly-note").textContent = unknownDateCount ? ("（年月不明: " + unknownDateCount + "件は含まれません）") : "";
+  // ③ pie chart of subcategories (食費・通信・...): a sorted bar list makes
+  // it easy to compare any two specific rows, but hard to judge "how big a
+  // slice of the WHOLE is this" at a glance -- the thing a pie/donut shape
+  // communicates directly through its angle. Grouped by parent category
+  // first (CAT_ORDER), sorted by amount within each group, so same-hue
+  // wedges land next to each other in the circle instead of being
+  // scattered by a pure value sort.
+  function renderSubcatChart(sub, total) {
+    var pieWrap = document.getElementById("subcat-pie");
+    var listWrap = document.getElementById("subcat-list");
+    pieWrap.innerHTML = ""; listWrap.innerHTML = "";
 
-    var legend = document.getElementById("monthly-legend");
-    legend.innerHTML = "";
+    var entries = [];
     CAT_ORDER.forEach(function (key) {
-      var c = CATS[key];
-      var li = document.createElement("div");
-      li.className = "legend-item";
-      li.innerHTML = '<span class="swatch" style="background:' + c.color + '"></span><span>' + c.label + "</span>";
-      legend.appendChild(li);
-    });
-
-    var maxTotal = 0;
-    keys.forEach(function (k) {
-      var m = monthly[k];
-      var t = m.fixed + m.fun + m.unknown;
-      if (t > maxTotal) maxTotal = t;
-    });
-    if (maxTotal <= 0) maxTotal = 1;
-
-    var chart = document.getElementById("month-chart");
-    chart.innerHTML = "";
-    keys.forEach(function (k) {
-      var m = monthly[k];
-      var wrap = document.createElement("div");
-      wrap.className = "month-col-wrap";
-      var col = document.createElement("div");
-      col.className = "month-col";
-      CAT_ORDER.forEach(function (key) {
-        var v = m[key];
-        if (v <= 0) return;
-        var seg = document.createElement("div");
-        seg.className = "month-seg";
-        seg.style.background = CATS[key].color;
-        seg.style.height = Math.max((v / maxTotal) * 150, 2) + "px";
-        seg.tabIndex = 0;
-        wireTooltip(seg, function () {
-          return CAT_ORDER.filter(function (kk) { return m[kk] > 0; }).map(function (kk) {
-            return { color: CATS[kk].color, value: yen(m[kk]), label: CATS[kk].label };
-          });
-        });
-        col.appendChild(seg);
+      var names = Object.keys(sub[key]).filter(function (n) { return sub[key][n] > 0; });
+      names.sort(function (a, b) { return sub[key][b] - sub[key][a]; });
+      names.forEach(function (name, i) {
+        entries.push({ catKey: key, name: name, value: sub[key][name], color: subcatColor(key, i) });
       });
-      var lab = document.createElement("div");
-      lab.className = "month-label";
-      lab.textContent = k;
-      wrap.appendChild(col); wrap.appendChild(lab);
-      chart.appendChild(wrap);
+    });
+
+    if (!entries.length || !total) {
+      listWrap.innerHTML = '<div class="hint">データがありません</div>';
+      return;
+    }
+
+    var svgNS = "http://www.w3.org/2000/svg";
+    var size = 180, cx = size / 2, cy = size / 2, r = size / 2 - 4;
+    var svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("viewBox", "0 0 " + size + " " + size);
+    svg.setAttribute("width", size);
+    svg.setAttribute("height", size);
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", "サブカテゴリ別支出の割合");
+
+    if (entries.length === 1) {
+      var only = entries[0];
+      var circle = document.createElementNS(svgNS, "circle");
+      circle.setAttribute("cx", cx); circle.setAttribute("cy", cy); circle.setAttribute("r", r);
+      circle.setAttribute("fill", only.color);
+      circle.tabIndex = 0;
+      wireTooltip(circle, function () { return [{ color: only.color, value: yen(only.value), label: only.name + "（" + CATS[only.catKey].label + "・100.0%）" }]; });
+      svg.appendChild(circle);
+    } else {
+      var angle = -Math.PI / 2;
+      entries.forEach(function (e) {
+        var share = e.value / total;
+        var sweep = share * 2 * Math.PI;
+        var endAngle = angle + sweep;
+        var x1 = cx + r * Math.cos(angle), y1 = cy + r * Math.sin(angle);
+        var x2 = cx + r * Math.cos(endAngle), y2 = cy + r * Math.sin(endAngle);
+        var largeArc = sweep > Math.PI ? 1 : 0;
+        var d = "M" + cx + "," + cy + " L" + x1 + "," + y1 + " A" + r + "," + r + " 0 " + largeArc + " 1 " + x2 + "," + y2 + " Z";
+        var path = document.createElementNS(svgNS, "path");
+        path.setAttribute("d", d);
+        path.setAttribute("fill", e.color);
+        path.tabIndex = 0;
+        wireTooltip(path, function () { return [{ color: e.color, value: yen(e.value), label: e.name + "（" + CATS[e.catKey].label + "・" + pct(share) + "）" }]; });
+        svg.appendChild(path);
+        angle = endAngle;
+      });
+    }
+    pieWrap.appendChild(svg);
+
+    entries.forEach(function (e) {
+      var share = total ? e.value / total : 0;
+      var line = document.createElement("div");
+      line.className = "stat-line";
+      line.innerHTML =
+        '<div class="label"><span class="swatch" style="background:' + e.color + '"></span>' + e.name +
+        '<span class="hint" style="margin-left:4px;">(' + CATS[e.catKey].label + ')</span></div>' +
+        '<div class="value">' + yen(e.value) + '<span class="share">' + pct(share) + "</span></div>";
+      listWrap.appendChild(line);
     });
   }
 
@@ -1695,7 +1689,6 @@
     renderStatTiles(agg.totals, total);
     renderComposition(agg.totals, total);
     renderSubcatChart(agg.sub, total);
-    renderMonthly(agg.monthly, agg.minDate, agg.maxDate);
     renderGroupedTable();
     if (!skipTxTable) renderTransactionsTable(); else renderTransactionsTablePreserving();
   }

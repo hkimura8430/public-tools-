@@ -132,11 +132,6 @@
   .stat-tile .share { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
   .swatch { width: 10px; height: 10px; border-radius: 3px; display:inline-block; flex: none; }
 
-  /* Legend */
-  .legend { display:flex; gap: 18px; flex-wrap: wrap; margin: 10px 0 4px; }
-  .legend-item { display:flex; align-items:center; gap: 6px; font-size: 12.5px; color: var(--text-secondary); }
-  .legend-item .amt { color: var(--text-primary); font-weight: 600; margin-left: 2px; }
-
   /* ② Overall summary: pie chart on the left, a vertical stat list on the right */
   .summary-row { display:flex; gap: 28px; align-items:center; flex-wrap: wrap; }
   .pie-wrap { flex: 0 0 auto; }
@@ -151,24 +146,6 @@
   .stat-line .value { font-size: 18px; font-weight: 600; white-space: nowrap; }
   .stat-line.hero .value { font-size: 25px; }
   .stat-line .share { font-size: 11.5px; color: var(--text-muted); margin-left: 8px; }
-
-  /* Subcategory bars */
-  .subcat-row { display:grid; grid-template-columns: 128px 1fr 88px; align-items:center; gap: 10px; margin-bottom: 10px; }
-  .subcat-label { font-size: 12.5px; color: var(--text-secondary); text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .subcat-track { background: var(--page); border-radius: 4px; height: 20px; position: relative; }
-  .subcat-bar { height: 100%; border-radius: 0 4px 4px 0; cursor:pointer; outline-offset:2px; }
-  .subcat-bar:hover, .subcat-bar:focus-visible { filter: brightness(1.08); }
-  .subcat-bar:focus-visible { outline: 2px solid var(--text-primary); }
-  .subcat-value { font-size: 12px; color: var(--text-primary); font-variant-numeric: tabular-nums; }
-
-  /* Monthly chart */
-  .month-chart { display:flex; align-items:flex-end; gap: 18px; height: 180px; padding-top: 10px; border-bottom: 1px solid var(--baseline); overflow-x:auto; }
-  .month-col-wrap { display:flex; flex-direction:column; align-items:center; gap:6px; flex: none; }
-  .month-col { width: 22px; display:flex; flex-direction:column-reverse; gap: 2px; height: 150px; }
-  .month-seg { width:100%; cursor:pointer; outline-offset:2px; }
-  .month-seg:hover, .month-seg:focus-visible { filter: brightness(1.08); }
-  .month-seg:focus-visible { outline: 2px solid var(--text-primary); }
-  .month-label { font-size: 11px; color: var(--text-muted); white-space:nowrap; }
 
   /* Tooltip */
   .tooltip {
@@ -332,17 +309,14 @@
 
     <div class="card">
       <h2>③ 内訳（カテゴリ別）</h2>
-      <div id="subcat-chart"></div>
-    </div>
-
-    <div class="card" id="monthly-card" style="display:none;">
-      <h2>④ 月次推移 <span class="sub" id="monthly-note"></span></h2>
-      <div class="legend" id="monthly-legend"></div>
-      <div class="month-chart" id="month-chart"></div>
+      <div class="summary-row">
+        <div class="pie-wrap" id="subcat-pie"></div>
+        <div class="stat-list" id="subcat-list"></div>
+      </div>
     </div>
 
     <div class="card">
-      <h2>⑤ 分類ルール <span class="sub">キーワードが含まれる明細を自動でカテゴリ分けします（長いキーワードが優先されます）</span></h2>
+      <h2>④ 分類ルール <span class="sub">キーワードが含まれる明細を自動でカテゴリ分けします（長いキーワードが優先されます）</span></h2>
       <div class="table-scroll" style="max-height:260px;">
         <table class="data-table" id="rules-table">
           <thead><tr><th>キーワード</th><th>カテゴリ</th><th>サブカテゴリ</th><th></th></tr></thead>
@@ -365,7 +339,7 @@
     </div>
 
     <div class="card">
-      <h2>⑥ 内容ごとに分類する <span class="sub">同じ内容（店名）をまとめて表示します。1回選べば同じ内容の取引すべてに反映されます</span></h2>
+      <h2>⑤ 内容ごとに分類する <span class="sub">同じ内容（店名）をまとめて表示します。1回選べば同じ内容の取引すべてに反映されます</span></h2>
       <div class="table-scroll">
         <table class="data-table" id="grouped-table">
           <thead><tr><th>内容</th><th class="num">件数</th><th class="num">合計金額</th><th>カテゴリ</th><th colspan="3"></th></tr></thead>
@@ -375,7 +349,7 @@
     </div>
 
     <div class="card">
-      <h2>⑦ 取引一覧 <span class="sub">1件ずつ個別に確認・修正したい場合はこちら</span></h2>
+      <h2>⑥ 取引一覧 <span class="sub">1件ずつ個別に確認・修正したい場合はこちら</span></h2>
       <div class="row between" style="margin-bottom:10px;">
         <input type="text" id="tx-search" placeholder="内容で検索..." style="max-width:220px;">
         <button class="btn btn-sm" id="export-csv" type="button">分類済みCSVをダウンロード</button>
