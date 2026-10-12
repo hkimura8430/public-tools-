@@ -298,7 +298,7 @@
     </div>
   </div>
 
-  <div id="empty-state">まだデータがありません。上で明細を入力して「分類する」を押すか、下の「⑤ 内容ごとに分類する」から手動で1件ずつ追加してください。</div>
+  <div id="empty-state">まだデータがありません。上で明細を入力して「分類する」を押すか、下の「⑤ 明細にない支出を手動追加」から手動で1件ずつ追加してください。</div>
 
   <div id="results-section">
 
@@ -319,7 +319,44 @@
     </div>
 
     <div class="card">
-      <h2>④ 分類ルール <span class="sub">キーワードが含まれる明細を自動でカテゴリ分けします（長いキーワードが優先されます）</span></h2>
+      <h2>④ 内容ごとに分類する <span class="sub">同じ内容（店名）をまとめて表示します。1回選べば同じ内容の取引すべてに反映されます</span></h2>
+      <div class="table-scroll">
+        <table class="data-table" id="grouped-table">
+          <thead><tr><th>内容</th><th class="num">件数</th><th class="num">合計金額</th><th>カテゴリ</th><th colspan="3"></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>⑤ 明細にない支出を手動追加</h2>
+      <div class="manual-add-form">
+        <div><label class="field">日付（任意）</label><input type="date" id="manual-date"></div>
+        <div><label class="field">内容</label><input type="text" id="manual-desc" placeholder="例）家賃"></div>
+        <div><label class="field">金額</label><input type="number" id="manual-amount" placeholder="例）80000"></div>
+        <div><label class="field">カテゴリ</label><select id="manual-category"></select></div>
+        <div><label class="field">サブカテゴリ</label><select id="manual-subcategory"></select></div>
+        <div><button class="btn btn-primary btn-sm" id="manual-add-btn" type="button">追加</button></div>
+      </div>
+      <div class="hint" style="margin:4px 0 0;">カード明細に出てこない支出（家賃の口座振替など）を、ここから手動で1件ずつ追加できます。</div>
+    </div>
+
+    <div class="card">
+      <h2>⑥ 取引一覧 <span class="sub">1件ずつ個別に確認・修正したい場合はこちら</span></h2>
+      <div class="row between" style="margin-bottom:10px;">
+        <input type="text" id="tx-search" placeholder="内容で検索..." style="max-width:220px;">
+        <button class="btn btn-sm" id="export-csv" type="button">分類済みCSVをダウンロード</button>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table" id="tx-table">
+          <thead><tr><th>日付</th><th>内容</th><th class="num">金額</th><th>カテゴリ</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>⑦ 分類ルール <span class="sub">キーワードが含まれる明細を自動でカテゴリ分けします（長いキーワードが優先されます）</span></h2>
       <div class="table-scroll" style="max-height:260px;">
         <table class="data-table" id="rules-table">
           <thead><tr><th>キーワード</th><th>カテゴリ</th><th>サブカテゴリ</th><th></th></tr></thead>
@@ -338,41 +375,6 @@
         <input type="file" id="import-rules-file" accept=".json" style="display:none;">
         <button class="btn btn-sm btn-ghost" id="reset-rules" type="button">初期ルールに戻す</button>
         <button class="btn btn-sm btn-ghost btn-danger" id="clear-all" type="button">保存データを消去</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>⑤ 内容ごとに分類する <span class="sub">同じ内容（店名）をまとめて表示します。1回選べば同じ内容の取引すべてに反映されます</span></h2>
-
-      <div class="manual-add-form">
-        <div><label class="field">日付（任意）</label><input type="date" id="manual-date"></div>
-        <div><label class="field">内容</label><input type="text" id="manual-desc" placeholder="例）家賃"></div>
-        <div><label class="field">金額</label><input type="number" id="manual-amount" placeholder="例）80000"></div>
-        <div><label class="field">カテゴリ</label><select id="manual-category"></select></div>
-        <div><label class="field">サブカテゴリ</label><select id="manual-subcategory"></select></div>
-        <div><button class="btn btn-primary btn-sm" id="manual-add-btn" type="button">追加</button></div>
-      </div>
-      <div class="hint" style="margin:4px 0 14px;">カード明細に出てこない支出（家賃の口座振替など）を、ここから手動で1件ずつ追加できます。</div>
-
-      <div class="table-scroll">
-        <table class="data-table" id="grouped-table">
-          <thead><tr><th>内容</th><th class="num">件数</th><th class="num">合計金額</th><th>カテゴリ</th><th colspan="3"></th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>⑥ 取引一覧 <span class="sub">1件ずつ個別に確認・修正したい場合はこちら</span></h2>
-      <div class="row between" style="margin-bottom:10px;">
-        <input type="text" id="tx-search" placeholder="内容で検索..." style="max-width:220px;">
-        <button class="btn btn-sm" id="export-csv" type="button">分類済みCSVをダウンロード</button>
-      </div>
-      <div class="table-scroll">
-        <table class="data-table" id="tx-table">
-          <thead><tr><th>日付</th><th>内容</th><th class="num">金額</th><th>カテゴリ</th><th></th></tr></thead>
-          <tbody></tbody>
-        </table>
       </div>
     </div>
 
