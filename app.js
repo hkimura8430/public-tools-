@@ -4,7 +4,7 @@
   // ---------- category model ----------
   var CATS = {
     fixed:   { label: "固定生活費",   color: "var(--series-fixed)", cssVar: "--series-fixed",
-               subs: ["食費","日用品","水道・光熱","通信","サブスク","その他固定費"] },
+               subs: ["住居費","食費","日用品","水道・光熱","通信","保険料","車・交通費","医療費","サブスク","その他固定費"] },
     fun:     { label: "娯楽・お出かけ", color: "var(--series-fun)",   cssVar: "--series-fun",
                subs: ["外食","旅行","交際費","趣味・その他娯楽"] },
     unknown: { label: "要確認",       color: "var(--series-other)", cssVar: "--series-other",
@@ -1449,7 +1449,7 @@
   // glance, but distinguishable from each other. Cycles if a custom rule
   // ever produces more subcategories than a palette has shades for.
   var SUBCAT_SHADE_PALETTE = {
-    fixed: ["#2a78d6", "#1a4f8f", "#4a93e8", "#7fb6f0", "#123a6b", "#a8d0f7"],
+    fixed: ["#2a78d6", "#1a4f8f", "#4a93e8", "#123a6b", "#7fb6f0", "#0d2847", "#a8d0f7", "#3f6aa8", "#5fa3e0", "#9bc3ef"],
     fun: ["#eb6834", "#b84a1a", "#f2894f", "#ffb183"],
     unknown: ["#9c9b95", "#6f6e68", "#c2c1ba"]
   };
@@ -1675,12 +1675,59 @@
     wireCategorySubcategorySelects(document.getElementById("new-rule-category"), document.getElementById("new-rule-subcategory"));
   }
 
+  // ⑤'s manual-add form: for spend that never shows up on a card statement
+  // at all (rent paid by bank transfer, cash, etc.) and so has no row for
+  // OCR/CSV parsing to ever find -- the only way to get it into the totals
+  // is to type it in directly. Reuses the same category/subcategory pickers
+  // and transaction shape as every other entry point (manual: true marks
+  // it the same way a manual override from the grouped table does, so it's
+  // never silently reclassified by reclassifyAll()).
+  function wireManualAddForm() {
+    var catSel = document.getElementById("manual-category");
+    var subSel = document.getElementById("manual-subcategory");
+    wireCategorySubcategorySelects(catSel, subSel);
+    document.getElementById("manual-add-btn").addEventListener("click", function () {
+      var desc = document.getElementById("manual-desc").value.trim();
+      var amountRaw = document.getElementById("manual-amount").value.trim();
+      var dateRaw = document.getElementById("manual-date").value; // "" or "YYYY-MM-DD" from <input type=date>
+      if (!desc) { alert("内容を入力してください。"); return; }
+      var amount = parseAmountVal(amountRaw);
+      if (amount === null) { alert("金額を数値で入力してください。"); return; }
+      if (!catSel.value || !subSel.value) { alert("カテゴリとサブカテゴリを選択してください。"); return; }
+      var date = dateRaw ? parseDateVal(dateRaw) : null;
+      transactions.push({
+        id: "t" + (txSeq++),
+        dateRaw: dateRaw,
+        date: date,
+        description: desc,
+        amountRaw: amountRaw,
+        amount: amount,
+        amountUnparsed: false,
+        category: catSel.value,
+        subcategory: subSel.value,
+        manual: true,
+        isOcr: false
+      });
+      document.getElementById("manual-desc").value = "";
+      document.getElementById("manual-amount").value = "";
+      document.getElementById("manual-date").value = "";
+      catSel.value = ""; catSel.dispatchEvent(new Event("change"));
+      renderAll();
+    });
+  }
+
   function renderAll(skipTxTable) {
     var hasData = transactions.length > 0;
+    // The results section stays visible even with zero transactions --
+    // ⑤'s manual-add form (for spend that never appears on a card
+    // statement at all, like a bank-transferred rent payment) needs to be
+    // reachable before any CSV/PDF has ever been loaded, not just as a
+    // supplement afterward. Every render* function below already has its
+    // own "データがありません" fallback for the empty case, so this is
+    // safe to always run.
     document.getElementById("empty-state").style.display = hasData ? "none" : "block";
-    document.getElementById("results-section").style.display = hasData ? "block" : "none";
+    document.getElementById("results-section").style.display = "block";
     renderRulesTable();
-    if (!hasData) return;
 
     var agg = computeTotals();
     var total = agg.totals.fixed + agg.totals.fun + agg.totals.unknown;
@@ -2019,5 +2066,6 @@
   }, 2500);
 
   fillNewRuleSelects();
-  renderRulesTable();
+  wireManualAddForm();
+  renderAll(); // show the results section (and so ⑤'s manual-add form) immediately, before any CSV/PDF has been loaded
 })();
