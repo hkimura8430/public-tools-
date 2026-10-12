@@ -298,7 +298,7 @@
     </div>
   </div>
 
-  <div id="empty-state">まだデータがありません。上で明細を入力して「分類する」を押すか、下の「⑤ 明細にない支出を手動追加」から手動で1件ずつ追加してください。</div>
+  <div id="empty-state">まだデータがありません。上で明細を入力して「分類する」を押すか、下の「⑥ 明細にない支出を手動追加」から手動で1件ずつ追加してください。</div>
 
   <div id="results-section">
 
@@ -329,20 +329,7 @@
     </div>
 
     <div class="card">
-      <h2>⑤ 明細にない支出を手動追加</h2>
-      <div class="manual-add-form">
-        <div><label class="field">日付（任意）</label><input type="date" id="manual-date"></div>
-        <div><label class="field">内容</label><input type="text" id="manual-desc" placeholder="例）家賃"></div>
-        <div><label class="field">金額</label><input type="number" id="manual-amount" placeholder="例）80000"></div>
-        <div><label class="field">カテゴリ</label><select id="manual-category"></select></div>
-        <div><label class="field">サブカテゴリ</label><select id="manual-subcategory"></select></div>
-        <div><button class="btn btn-primary btn-sm" id="manual-add-btn" type="button">追加</button></div>
-      </div>
-      <div class="hint" style="margin:4px 0 0;">カード明細に出てこない支出（家賃の口座振替など）を、ここから手動で1件ずつ追加できます。</div>
-    </div>
-
-    <div class="card">
-      <h2>⑥ 取引一覧 <span class="sub">1件ずつ個別に確認・修正したい場合はこちら</span></h2>
+      <h2>⑤ 取引一覧 <span class="sub">1件ずつ個別に確認・修正したい場合はこちら</span></h2>
       <div class="row between" style="margin-bottom:10px;">
         <input type="text" id="tx-search" placeholder="内容で検索..." style="max-width:220px;">
         <button class="btn btn-sm" id="export-csv" type="button">分類済みCSVをダウンロード</button>
@@ -353,6 +340,19 @@
           <tbody></tbody>
         </table>
       </div>
+    </div>
+
+    <div class="card">
+      <h2>⑥ 明細にない支出を手動追加</h2>
+      <div class="manual-add-form">
+        <div><label class="field">日付（任意）</label><input type="date" id="manual-date"></div>
+        <div><label class="field">内容</label><input type="text" id="manual-desc" placeholder="例）家賃"></div>
+        <div><label class="field">金額</label><input type="number" id="manual-amount" placeholder="例）80000"></div>
+        <div><label class="field">カテゴリ</label><select id="manual-category"></select></div>
+        <div><label class="field">サブカテゴリ</label><select id="manual-subcategory"></select></div>
+        <div><button class="btn btn-primary btn-sm" id="manual-add-btn" type="button">追加</button></div>
+      </div>
+      <div class="hint" style="margin:4px 0 0;">カード明細に出てこない支出（家賃の口座振替など）を、ここから手動で1件ずつ追加できます。</div>
     </div>
 
     <div class="card">
