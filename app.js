@@ -1541,8 +1541,13 @@
     return span;
   }
 
-  function buildCategorySelect(current) {
+  function buildCategorySelect(current, addPlaceholder) {
     var sel = document.createElement("select");
+    if (addPlaceholder) {
+      var ph = document.createElement("option");
+      ph.value = ""; ph.textContent = "-- カテゴリを選択 --";
+      sel.appendChild(ph);
+    }
     CAT_ORDER.forEach(function (key) {
       CATS[key].subs.forEach(function (s) {
         var opt = document.createElement("option");
@@ -1675,17 +1680,19 @@
     wireCategorySubcategorySelects(document.getElementById("new-rule-category"), document.getElementById("new-rule-subcategory"));
   }
 
-  // ⑤'s manual-add form: for spend that never shows up on a card statement
+  // ⑥'s manual-add form: for spend that never shows up on a card statement
   // at all (rent paid by bank transfer, cash, etc.) and so has no row for
   // OCR/CSV parsing to ever find -- the only way to get it into the totals
-  // is to type it in directly. Reuses the same category/subcategory pickers
-  // and transaction shape as every other entry point (manual: true marks
-  // it the same way a manual override from the grouped table does, so it's
-  // never silently reclassified by reclassifyAll()).
+  // is to type it in directly. Category + subcategory are one combined
+  // dropdown (via buildCategorySelect, the same "固定生活費 / 食費"-style
+  // picker ⑤'s per-row category select already uses) rather than two
+  // dependent selects, so one choice sets both instead of two clicks.
   function wireManualAddForm() {
-    var catSel = document.getElementById("manual-category");
-    var subSel = document.getElementById("manual-subcategory");
-    wireCategorySubcategorySelects(catSel, subSel);
+    var placeholder = document.getElementById("manual-category");
+    var catSel = buildCategorySelect({ category: "", subcategory: "" }, true);
+    catSel.id = "manual-category";
+    placeholder.parentNode.replaceChild(catSel, placeholder);
+
     document.getElementById("manual-add-btn").addEventListener("click", function () {
       var desc = document.getElementById("manual-desc").value.trim();
       var amountRaw = document.getElementById("manual-amount").value.trim();
@@ -1693,7 +1700,8 @@
       if (!desc) { alert("内容を入力してください。"); return; }
       var amount = parseAmountVal(amountRaw);
       if (amount === null) { alert("金額を数値で入力してください。"); return; }
-      if (!catSel.value || !subSel.value) { alert("カテゴリとサブカテゴリを選択してください。"); return; }
+      if (!catSel.value) { alert("カテゴリを選択してください。"); return; }
+      var parts = catSel.value.split("::");
       var date = dateRaw ? parseDateVal(dateRaw) : null;
       transactions.push({
         id: "t" + (txSeq++),
@@ -1703,15 +1711,15 @@
         amountRaw: amountRaw,
         amount: amount,
         amountUnparsed: false,
-        category: catSel.value,
-        subcategory: subSel.value,
+        category: parts[0],
+        subcategory: parts[1],
         manual: true,
         isOcr: false
       });
       document.getElementById("manual-desc").value = "";
       document.getElementById("manual-amount").value = "";
       document.getElementById("manual-date").value = "";
-      catSel.value = ""; catSel.dispatchEvent(new Event("change"));
+      catSel.value = "";
       renderAll();
     });
   }
@@ -2023,6 +2031,19 @@
     document.getElementById(id).addEventListener("change", updatePreviewHighlight);
   });
   document.getElementById("classify-btn").addEventListener("click", runClassification);
+  // ⑤ 取引一覧 is hidden by default -- ④'s grouped-by-content view already
+  // covers the common "classify / delete a noise row" workflow, and always
+  // showing both just gives the user two overlapping tables to reconcile.
+  // ⑤ is still there for the cases ④ can't do (per-transaction override,
+  // search, CSV export) -- just tucked behind this toggle instead of
+  // competing for attention by default.
+  document.getElementById("toggle-tx-list-btn").addEventListener("click", function () {
+    var card = document.getElementById("tx-list-card");
+    var isHidden = card.style.display === "none";
+    card.style.display = isHidden ? "block" : "none";
+    this.textContent = isHidden ? "取引一覧を閉じる" : "取引一覧から整理する";
+    if (isHidden) card.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
   document.getElementById("tx-search").addEventListener("input", function () { renderTransactionsTable(); });
   document.getElementById("export-csv").addEventListener("click", exportCSV);
   document.getElementById("export-rules").addEventListener("click", exportRules);
