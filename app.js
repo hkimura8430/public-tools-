@@ -1470,6 +1470,14 @@
     var listWrap = document.getElementById("subcat-list");
     pieWrap.innerHTML = ""; listWrap.innerHTML = "";
 
+    // 総支出 shows up front unconditionally -- same as ②'s hero tile --
+    // rather than only appearing once there's at least one subcategory to
+    // list below it.
+    var hero = document.createElement("div");
+    hero.className = "stat-line hero";
+    hero.innerHTML = '<div class="label">総支出</div><div class="value">' + yen(total) + "</div>";
+    listWrap.appendChild(hero);
+
     var entries = [];
     CAT_ORDER.forEach(function (key) {
       var names = Object.keys(sub[key]).filter(function (n) { return sub[key][n] > 0; });
@@ -1480,7 +1488,10 @@
     });
 
     if (!entries.length || !total) {
-      listWrap.innerHTML = '<div class="hint">データがありません</div>';
+      var noData = document.createElement("div");
+      noData.className = "hint";
+      noData.textContent = "データがありません";
+      listWrap.appendChild(noData);
       return;
     }
 
@@ -1521,11 +1532,6 @@
       });
     }
     pieWrap.appendChild(svg);
-
-    var hero = document.createElement("div");
-    hero.className = "stat-line hero";
-    hero.innerHTML = '<div class="label">総支出</div><div class="value">' + yen(total) + "</div>";
-    listWrap.appendChild(hero);
 
     entries.forEach(function (e) {
       var share = total ? e.value / total : 0;
