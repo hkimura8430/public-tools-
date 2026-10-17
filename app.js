@@ -1522,6 +1522,11 @@
     }
     pieWrap.appendChild(svg);
 
+    var hero = document.createElement("div");
+    hero.className = "stat-line hero";
+    hero.innerHTML = '<div class="label">総支出</div><div class="value">' + yen(total) + "</div>";
+    listWrap.appendChild(hero);
+
     entries.forEach(function (e) {
       var share = total ? e.value / total : 0;
       var line = document.createElement("div");
