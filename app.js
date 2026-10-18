@@ -1232,24 +1232,44 @@
     });
   }
 
+  // Tracks whether the paste area's current text is an auto-filled copy of
+  // a file that hasn't been hand-edited since (see analyzeInput() and the
+  // encoding-select handler below) -- lets changing the encoding re-read
+  // the file with the new encoding instead of just re-parsing the already-
+  // (possibly wrongly-)decoded text sitting in the box.
+  var pasteAreaIsFileCopy = false;
+
+  // The 2nd callback arg tells the caller whether `text` came straight from
+  // a file the user hasn't seen yet (vs. text already sitting in the paste
+  // area) -- analyzeInput() uses it to mirror the PDF path's behavior of
+  // showing what was actually read, instead of a CSV/TXT file silently
+  // getting parsed with nothing to look at or fix.
   function getInputText(cb) {
     var pasted = document.getElementById("paste-area").value;
-    if (pasted && pasted.trim()) { cb(pasted); return; }
+    if (pasted && pasted.trim()) { cb(pasted, false); return; }
     var file = document.getElementById("file-input").files[0];
     if (file) {
       var enc = document.getElementById("encoding-select").value;
       var reader = new FileReader();
-      reader.onload = function (e) { cb(e.target.result); };
+      reader.onload = function (e) { cb(e.target.result, true); };
       reader.readAsText(file, enc);
       return;
     }
-    cb("");
+    cb("", false);
   }
 
   function analyzeInput() {
-    getInputText(function (text) {
+    getInputText(function (text, fromFile) {
       var status = document.getElementById("parse-status");
       if (!text || !text.trim()) { status.textContent = "入力データがありません"; return; }
+      if (fromFile) {
+        // Same as the PDF path: show what was actually read in the paste
+        // area (rather than parsing it invisibly) so there's somewhere to
+        // see and fix the raw content, the way every other input path
+        // already works.
+        document.getElementById("paste-area").value = text;
+        pasteAreaIsFileCopy = true;
+      }
       var delim = detectDelimiter(text);
       var rowsAll = parseCSV(text, delim);
       if (!rowsAll.length) { status.textContent = "データを読み取れませんでした"; return; }
@@ -2029,6 +2049,7 @@
   // ---------- wire up ----------
   document.getElementById("load-sample").addEventListener("click", function () {
     lastInputWasOcr = false;
+    pasteAreaIsFileCopy = false;
     document.getElementById("ocr-offer").style.display = "none";
     document.getElementById("paste-area").value = SAMPLE_CSV;
     document.getElementById("file-input").value = "";
@@ -2036,6 +2057,7 @@
   });
   document.getElementById("paste-area").addEventListener("change", function () {
     lastInputWasOcr = false;
+    pasteAreaIsFileCopy = false; // hand-edited now, so a later encoding change shouldn't overwrite it
     analyzeInput();
   });
   document.getElementById("file-input").addEventListener("change", function (e) {
@@ -2047,7 +2069,15 @@
       analyzeInput();
     }
   });
-  document.getElementById("encoding-select").addEventListener("change", analyzeInput);
+  document.getElementById("encoding-select").addEventListener("change", function () {
+    // The paste area now gets auto-filled from a CSV/TXT file (see
+    // analyzeInput()), so simply re-parsing it after switching encoding
+    // would just re-parse the same already-(mis)decoded text -- clear it
+    // first so getInputText() falls through to re-reading the file fresh
+    // with the newly chosen encoding, same as before that auto-fill existed.
+    if (pasteAreaIsFileCopy) document.getElementById("paste-area").value = "";
+    analyzeInput();
+  });
   document.getElementById("has-header").addEventListener("change", analyzeInput);
   ["col-date", "col-desc", "col-amount"].forEach(function (id) {
     document.getElementById(id).addEventListener("change", updatePreviewHighlight);
