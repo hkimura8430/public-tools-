@@ -1166,8 +1166,8 @@
   // rows, one cell per column) instead of leaving the user to eyeball
   // commas in the raw pasted/OCR'd text to figure out which column is
   // which. Capped to a sample of rows -- this is for visually confirming
-  // the column layout, not for browsing every row (section ⑦ already
-  // covers that).
+  // the column layout, not for browsing every row (the 取引一覧 panel
+  // inside ④ already covers that).
   var PREVIEW_MAX_ROWS = 30;
   function renderPreviewTable(headerRow, hasHeader, numCols) {
     var wrap = document.getElementById("preview-table-wrap");
@@ -1254,6 +1254,13 @@
       var rowsAll = parseCSV(text, delim);
       if (!rowsAll.length) { status.textContent = "データを読み取れませんでした"; return; }
       lastRawRows = rowsAll;
+      // Progressive reveal: a first-time user only sees "paste or choose a
+      // file" at first -- the column pickers and "分類する" only appear
+      // once there's actually something to pick columns for, instead of
+      // showing every control (several of them meaningless until data
+      // exists) all at once.
+      document.getElementById("column-step").style.display = "block";
+      document.getElementById("classify-step").style.display = "flex";
       var hasHeader = document.getElementById("has-header").checked;
       var dataRows = hasHeader ? rowsAll.slice(1) : rowsAll;
       var guess = detectColumns(dataRows.slice(0, 60));
@@ -1691,13 +1698,16 @@
     wireCategorySubcategorySelects(document.getElementById("new-rule-category"), document.getElementById("new-rule-subcategory"));
   }
 
-  // ⑥'s manual-add form: for spend that never shows up on a card statement
+  // ①'s manual-add form: for spend that never shows up on a card statement
   // at all (rent paid by bank transfer, cash, etc.) and so has no row for
   // OCR/CSV parsing to ever find -- the only way to get it into the totals
-  // is to type it in directly. Category + subcategory are one combined
-  // dropdown (via buildCategorySelect, the same "固定生活費 / 食費"-style
-  // picker ⑤'s per-row category select already uses) rather than two
-  // dependent selects, so one choice sets both instead of two clicks.
+  // is to type it in directly. Lives alongside the paste/file inputs
+  // (rather than gated behind "分類する" like ②-⑤) so it works as a
+  // standalone entry point even with zero CSV/PDF data. Category +
+  // subcategory are one combined dropdown (via buildCategorySelect, the
+  // same "固定生活費 / 食費"-style picker ④'s per-row category select
+  // already uses) rather than two dependent selects, so one choice sets
+  // both instead of two clicks.
   function wireManualAddForm() {
     var placeholder = document.getElementById("manual-category");
     var catSel = buildCategorySelect({ category: "", subcategory: "" }, true);
@@ -1737,16 +1747,17 @@
 
   function renderAll(skipTxTable) {
     var hasData = transactions.length > 0;
-    // The results section stays visible even with zero transactions --
-    // ⑤'s manual-add form (for spend that never appears on a card
-    // statement at all, like a bank-transferred rent payment) needs to be
-    // reachable before any CSV/PDF has ever been loaded, not just as a
-    // supplement afterward. Every render* function below already has its
-    // own "データがありません" fallback for the empty case, so this is
-    // safe to always run.
+    // ② and everything after it stays hidden until there's actually
+    // something to show -- matching ①'s own progressive reveal (column
+    // pickers / "分類する" only appear once data exists). ①'s manual-add
+    // form is NOT gated by this (it sits outside results-section) so it's
+    // still reachable with zero CSV/PDF data; successfully adding one
+    // entry there makes hasData true and reveals everything below, same
+    // as running "分類する" would.
     document.getElementById("empty-state").style.display = hasData ? "none" : "block";
-    document.getElementById("results-section").style.display = "block";
+    document.getElementById("results-section").style.display = hasData ? "block" : "none";
     renderRulesTable();
+    if (!hasData) return;
 
     var agg = computeTotals();
     var total = agg.totals.fixed + agg.totals.fun + agg.totals.unknown;
@@ -2042,12 +2053,12 @@
     document.getElementById(id).addEventListener("change", updatePreviewHighlight);
   });
   document.getElementById("classify-btn").addEventListener("click", runClassification);
-  // ⑤ 取引一覧 is hidden by default -- ④'s grouped-by-content view already
-  // covers the common "classify / delete a noise row" workflow, and always
-  // showing both just gives the user two overlapping tables to reconcile.
-  // ⑤ is still there for the cases ④ can't do (per-transaction override,
-  // search, CSV export) -- just tucked behind this toggle instead of
-  // competing for attention by default.
+  // 取引一覧 (inside ④) is hidden by default -- ④'s grouped-by-content view
+  // already covers the common "classify / delete a noise row" workflow,
+  // and always showing both just gives the user two overlapping tables to
+  // reconcile. It's still there for the cases the grouped view can't do
+  // (per-transaction override, search, CSV export) -- just tucked behind
+  // this toggle instead of competing for attention by default.
   document.getElementById("toggle-tx-list-btn").addEventListener("click", function () {
     var card = document.getElementById("tx-list-card");
     var isHidden = card.style.display === "none";
@@ -2099,5 +2110,5 @@
 
   fillNewRuleSelects();
   wireManualAddForm();
-  renderAll(); // show the results section (and so ⑤'s manual-add form) immediately, before any CSV/PDF has been loaded
+  renderAll(); // sets up the initial (hidden-until-there's-data) state correctly, same as any later call
 })();
