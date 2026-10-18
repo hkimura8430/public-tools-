@@ -243,17 +243,9 @@
 
     <div class="grid2" style="margin-top:14px;">
       <div>
-        <label class="field">明細を貼り付け（CSV / タブ区切り）</label>
-        <textarea id="paste-area" placeholder="例）
-日付,内容,金額
-2026/06/03,スーパーライフ,4200
-2026/06/05,トウキヨウガス,5000"></textarea>
-        <div class="hint"><button class="btn btn-ghost btn-sm" id="load-sample" type="button">サンプルデータを試す</button></div>
-      </div>
-      <div>
-        <label class="field">またはCSV/PDFファイルを選択</label>
+        <label class="field">CSV/PDFファイルを選択</label>
         <input type="file" id="file-input" accept=".csv,.txt,.pdf">
-        <div class="hint" id="pdf-hint">PDF明細（利用明細のPDF等）にも対応しています。レイアウトによっては自動抽出がうまくいかない場合があるため、抽出後は左の貼り付け欄で内容を必ず確認してください。</div>
+        <div class="hint" id="pdf-hint">PDF明細（利用明細のPDF等）にも対応しています。レイアウトによっては自動抽出がうまくいかない場合があるため、抽出後は貼り付け欄で内容を必ず確認してください。</div>
         <div id="ocr-offer" style="display:none; margin-top:8px;">
           <button class="btn btn-sm" id="ocr-try-btn" type="button">画像認識(OCR)で試す</button>
           <div class="ocr-note">文字情報を持たないPDF（文字が図形として描画されているPDF等）向けの代替手段です。初回は追加で約5.6MBのダウンロードが発生し、数十秒〜数分かかります。画像認識のため数字を誤認識することがあるため、結果は必ず元のPDFと見比べてください。</div>
@@ -266,6 +258,17 @@
             <option value="shift-jis">Shift-JIS（日本のカード会社CSVに多い）</option>
           </select>
         </div>
+      </div>
+      <div>
+        <label class="field">またはテキストで貼り付け</label>
+        <div><button class="btn btn-ghost btn-sm" id="toggle-paste-btn" type="button">明細をCSV / タブ区切りで貼り付け</button></div>
+        <div id="paste-area-wrap" style="display:none; margin-top:10px;">
+          <textarea id="paste-area" placeholder="例）
+日付,内容,金額
+2026/06/03,スーパーライフ,4200
+2026/06/05,トウキヨウガス,5000"></textarea>
+        </div>
+        <div class="hint" style="margin-top:8px;"><button class="btn btn-ghost btn-sm" id="load-sample" type="button">サンプルデータを試す</button></div>
       </div>
     </div>
 

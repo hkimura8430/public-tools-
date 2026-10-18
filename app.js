@@ -407,12 +407,14 @@
       if (!result.rows.length) {
         lastInputWasOcr = false;
         document.getElementById("paste-area").value = lines.join("\n");
+        revealPasteArea();
         analyzeInput();
         status.textContent = "⚠ PDFからテキスト(" + lines.length + "行)は抽出できましたが、「日付」と「金額」の並びを自動検出できませんでした。下の貼り付け欄に抽出テキストを入れたので、列の選択と内容を確認するか「日付,内容,金額」の形に手直ししてから分類してください。";
         return;
       }
       lastInputWasOcr = false;
       document.getElementById("paste-area").value = result.csvText;
+      revealPasteArea();
       analyzeInput();
       status.textContent = "PDFから " + result.rows.length + " 件の明細候補を抽出しました（全" + lines.length + "行中）" +
         (result.lenient ? "。※日付が省略されている行は直前の日付を引き継いで推定しているため、内容を必ずご確認ください。" : "。内容を確認してから「分類する」を押してください。");
@@ -1066,6 +1068,7 @@
         }
         lastInputWasOcr = true;
         document.getElementById("paste-area").value = rawColumnsToCsvText(rawColumnRows, rawNumCols);
+        revealPasteArea();
         analyzeInput();
         status.textContent = "⚠ OCRで表の列を" + rawNumCols + "列、" + rawColumnRows.length + "行読み取りました。下の「日付の列」「内容の列」「金額の列」で、実際に日付・内容・金額に対応する列を確認・選択してから「分類する」を押してください（自動推定は参考程度です）。画像認識のため誤読の可能性があるので、内容を元のPDFと見比べてください。";
         document.getElementById("ocr-offer").style.display = "none";
@@ -1083,12 +1086,14 @@
       if (!allRows.length) {
         lastInputWasOcr = false;
         document.getElementById("paste-area").value = allLines.join("\n");
+        revealPasteArea();
         analyzeInput();
         status.textContent = "⚠ OCRでテキスト(" + allLines.length + "行)は認識できましたが、取引らしき行を自動検出できませんでした。内容を確認し、手直ししてから分類してください（画像認識のため誤読の可能性があります）。";
         return;
       }
       lastInputWasOcr = true;
       document.getElementById("paste-area").value = rowsToCsvText(allRows);
+      revealPasteArea();
       analyzeInput();
       status.textContent = "⚠ OCRで " + allRows.length + " 件の明細候補を認識しました。" +
         (anyAmountOnly ? "日付の読み取りが不安定だったページがあり、該当行の日付は空欄にしています（手動で補ってください）。" : "") +
@@ -1239,6 +1244,20 @@
   // (possibly wrongly-)decoded text sitting in the box.
   var pasteAreaIsFileCopy = false;
 
+  // The paste box is collapsed behind a button by default (see "①
+  // 明細を入力する"'s layout) so it doesn't visually compete with file
+  // selection as the lead option. Whenever something sets its content
+  // programmatically (PDF text, OCR results, a CSV/TXT file's raw text,
+  // sample data) it needs to open back up too -- otherwise the whole point
+  // of showing that content for the user to verify is defeated by it
+  // being invisible.
+  function revealPasteArea() {
+    var wrap = document.getElementById("paste-area-wrap");
+    var btn = document.getElementById("toggle-paste-btn");
+    if (wrap) wrap.style.display = "block";
+    if (btn) btn.textContent = "貼り付け内容を閉じる";
+  }
+
   // The 2nd callback arg tells the caller whether `text` came straight from
   // a file the user hasn't seen yet (vs. text already sitting in the paste
   // area) -- analyzeInput() uses it to mirror the PDF path's behavior of
@@ -1269,6 +1288,7 @@
         // already works.
         document.getElementById("paste-area").value = text;
         pasteAreaIsFileCopy = true;
+        revealPasteArea();
       }
       var delim = detectDelimiter(text);
       var rowsAll = parseCSV(text, delim);
@@ -2053,7 +2073,15 @@
     document.getElementById("ocr-offer").style.display = "none";
     document.getElementById("paste-area").value = SAMPLE_CSV;
     document.getElementById("file-input").value = "";
+    revealPasteArea();
     analyzeInput();
+  });
+  document.getElementById("toggle-paste-btn").addEventListener("click", function () {
+    var wrap = document.getElementById("paste-area-wrap");
+    var isHidden = wrap.style.display === "none";
+    wrap.style.display = isHidden ? "block" : "none";
+    this.textContent = isHidden ? "貼り付け内容を閉じる" : "明細をCSV / タブ区切りで貼り付け";
+    if (isHidden) document.getElementById("paste-area").focus();
   });
   document.getElementById("paste-area").addEventListener("change", function () {
     lastInputWasOcr = false;
