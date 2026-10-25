@@ -1808,6 +1808,17 @@
     renderSubcatChart(agg.sub, total);
     renderGroupedTable();
     if (!skipTxTable) renderTransactionsTable(); else renderTransactionsTablePreserving();
+
+    // Once results are showing, ②③ are just reading (no input needed), so
+    // the natural "next thing to act on" is ④ -- but only while there's
+    // still something unclassified ("要確認") left for the user to fix.
+    // Fully-classified data (e.g. every merchant already matched by an
+    // existing rule) has nothing left to act on, so no highlight is shown.
+    var groupedCard = document.getElementById("grouped-card");
+    var groupedBadge = document.getElementById("grouped-badge");
+    var needsReview = agg.totals.unknown > 0;
+    if (groupedCard) groupedCard.classList.toggle("highlight", needsReview);
+    if (groupedBadge) groupedBadge.style.display = needsReview ? "inline-block" : "none";
   }
 
   // ---------- grouped-by-description classification ----------

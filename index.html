@@ -111,6 +111,28 @@
   }
   textarea { min-height: 130px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
 
+  /* Marks the control a first-time user should act on first (e.g. "choose
+     a file" in ①) so it's visually obvious without having to read the
+     surrounding text closely. */
+  .primary-action {
+    border: 1.5px solid var(--series-fixed); border-radius: 10px;
+    padding: 14px 14px 12px; background: color-mix(in srgb, var(--series-fixed) 7%, var(--surface-1));
+  }
+  .primary-badge {
+    display: inline-block; background: var(--series-fixed); color: #fff;
+    font-size: 10.5px; font-weight: 700; padding: 2px 9px; border-radius: 999px;
+    margin-bottom: 8px; letter-spacing: 0.02em;
+  }
+  /* Same idea as .primary-action, but for a whole .card (e.g. ④ once
+     there's at least one "要確認" group once classification has run --
+     the card itself is what the user should act on next, not just one
+     field inside it). */
+  .card.highlight {
+    border-color: var(--series-fixed);
+    background: color-mix(in srgb, var(--series-fixed) 5%, var(--surface-1));
+  }
+  .card.highlight > .primary-badge { display: inline-block !important; }
+
   .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .grid3 { display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
   @media (max-width: 640px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
@@ -242,7 +264,8 @@
     <h2>① 明細を入力する</h2>
 
     <div class="grid2" style="margin-top:14px;">
-      <div>
+      <div class="primary-action">
+        <span class="primary-badge">① まずはここから</span>
         <label class="field">CSV/PDFファイルを選択</label>
         <input type="file" id="file-input" accept=".csv,.txt,.pdf">
         <div class="hint" id="pdf-hint">PDF明細（利用明細のPDF等）にも対応しています。レイアウトによっては自動抽出がうまくいかない場合があるため、抽出後は貼り付け欄で内容を必ず確認してください。</div>
@@ -349,7 +372,8 @@
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" id="grouped-card">
+      <span class="primary-badge" id="grouped-badge" style="display:none;">次はここを確認</span>
       <h2>④ 内容ごとに分類する <span class="sub">同じ内容（店名）をまとめて表示します。1回選べば同じ内容の取引すべてに反映されます</span></h2>
       <div class="table-scroll">
         <table class="data-table" id="grouped-table">
