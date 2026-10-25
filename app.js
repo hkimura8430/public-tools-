@@ -1743,17 +1743,13 @@
   // OCR/CSV parsing to ever find -- the only way to get it into the totals
   // is to type it in directly. Lives alongside the paste/file inputs
   // (rather than gated behind "分類する" like ②-⑤) so it works as a
-  // standalone entry point even with zero CSV/PDF data. Category +
-  // subcategory are one combined dropdown (via buildCategorySelect, the
-  // same "固定生活費 / 食費"-style picker ④'s per-row category select
-  // already uses) rather than two dependent selects, so one choice sets
-  // both instead of two clicks.
+  // standalone entry point even with zero CSV/PDF data. Only asks for
+  // 日付/内容/金額, the same three fields a CSV row would supply -- category
+  // is deliberately NOT chosen here. It's assigned the same way any other
+  // transaction is (auto-matched against the keyword rules via classify(),
+  // then adjustable in ④ like everything else) instead of duplicating ④'s
+  // job inside ①.
   function wireManualAddForm() {
-    var placeholder = document.getElementById("manual-category");
-    var catSel = buildCategorySelect({ category: "", subcategory: "" }, true);
-    catSel.id = "manual-category";
-    placeholder.parentNode.replaceChild(catSel, placeholder);
-
     document.getElementById("manual-add-btn").addEventListener("click", function () {
       var desc = document.getElementById("manual-desc").value.trim();
       var amountRaw = document.getElementById("manual-amount").value.trim();
@@ -1761,9 +1757,8 @@
       if (!desc) { alert("内容を入力してください。"); return; }
       var amount = parseAmountVal(amountRaw);
       if (amount === null) { alert("金額を数値で入力してください。"); return; }
-      if (!catSel.value) { alert("カテゴリを選択してください。"); return; }
-      var parts = catSel.value.split("::");
       var date = dateRaw ? parseDateVal(dateRaw) : null;
+      var cls = classify(desc);
       transactions.push({
         id: "t" + (txSeq++),
         dateRaw: dateRaw,
@@ -1772,15 +1767,14 @@
         amountRaw: amountRaw,
         amount: amount,
         amountUnparsed: false,
-        category: parts[0],
-        subcategory: parts[1],
-        manual: true,
+        category: cls.category,
+        subcategory: cls.subcategory,
+        manual: false,
         isOcr: false
       });
       document.getElementById("manual-desc").value = "";
       document.getElementById("manual-amount").value = "";
       document.getElementById("manual-date").value = "";
-      catSel.value = "";
       renderAll();
     });
   }
@@ -2122,6 +2116,26 @@
     document.getElementById(id).addEventListener("change", updatePreviewHighlight);
   });
   document.getElementById("classify-btn").addEventListener("click", runClassification);
+  // Lets the user back out of whatever got loaded into the preview (sample
+  // data, a file, pasted text) without having to manually clear the paste
+  // box by hand -- returns ① to its just-opened state (file-select + the
+  // collapsed paste toggle, no column pickers / preview / classify button).
+  document.getElementById("clear-input-btn").addEventListener("click", function () {
+    document.getElementById("paste-area").value = "";
+    document.getElementById("file-input").value = "";
+    document.getElementById("ocr-offer").style.display = "none";
+    var ocrProgress = document.getElementById("ocr-progress");
+    if (ocrProgress) ocrProgress.textContent = "";
+    lastInputWasOcr = false;
+    pasteAreaIsFileCopy = false;
+    lastRawRows = [];
+    document.getElementById("column-step").style.display = "none";
+    document.getElementById("classify-step").style.display = "none";
+    document.getElementById("preview-table-wrap").style.display = "none";
+    document.getElementById("paste-area-wrap").style.display = "none";
+    document.getElementById("toggle-paste-btn").textContent = "明細をCSV / タブ区切りで貼り付け";
+    document.getElementById("parse-status").textContent = "";
+  });
   // 取引一覧 (inside ④) is hidden by default -- ④'s grouped-by-content view
   // already covers the common "classify / delete a noise row" workflow,
   // and always showing both just gives the user two overlapping tables to

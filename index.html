@@ -123,6 +123,21 @@
     font-size: 10.5px; font-weight: 700; padding: 2px 9px; border-radius: 999px;
     margin-bottom: 8px; letter-spacing: 0.02em;
   }
+  /* Same pill shape as .primary-badge but muted -- marks ①-2 / ①-3 as
+     siblings of ①-1 (same step, alternative ways in) without implying
+     "do this first" the way the blue badge does. */
+  .step-badge {
+    display: inline-block; background: var(--gridline); color: var(--text-secondary);
+    font-size: 10.5px; font-weight: 700; padding: 2px 9px; border-radius: 999px;
+    margin-bottom: 8px; letter-spacing: 0.02em;
+  }
+  /* ①-1/①-2/①-3 are stacked vertically (one block each) instead of a
+     2-column grid, with a plain "または" divider between them -- makes it
+     visually obvious they're 3 alternative ways into the same step, not
+     separate steps or a primary option + 2 afterthoughts. */
+  .block { border: 1px solid var(--border); border-radius: 10px; padding: 14px; background: var(--page); }
+  .divider { display:flex; align-items:center; gap:10px; margin: 16px 0; color: var(--text-muted); font-size: 12px; }
+  .divider::before, .divider::after { content:""; flex:1; height:1px; background: var(--gridline); }
   /* Same idea as .primary-action, but for a whole .card (e.g. ④ once
      there's at least one "要確認" group once classification has run --
      the card itself is what the user should act on next, not just one
@@ -136,6 +151,11 @@
   .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .grid3 { display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
   @media (max-width: 640px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
+
+  /* 日付/内容/金額の列選択は常に横一列（3カラム）のまま -- grid3と違い、
+     幅が狭くても縦積みにはしない。短いラベルなので小さい画面でも並ぶ。 */
+  .col-select-row { display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  @media (max-width: 480px) { .col-select-row { gap: 6px; } .col-select-row select { font-size: 12px; padding: 7px 4px; } }
 
   .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
   .row.between { justify-content: space-between; }
@@ -220,7 +240,7 @@
   .rule-form { display:grid; grid-template-columns: 1.4fr 1fr 1fr auto; gap: 8px; margin-top: 12px; align-items:end; }
   @media (max-width: 640px) { .rule-form { grid-template-columns: 1fr 1fr; } }
 
-  .manual-add-form { display:grid; grid-template-columns: 0.9fr 1.4fr 0.8fr 1.3fr auto; gap: 8px; margin-top: 12px; align-items:end; }
+  .manual-add-form { display:grid; grid-template-columns: 0.9fr 1.6fr 0.9fr auto; gap: 8px; margin-top: 12px; align-items:end; }
   @media (max-width: 860px) { .manual-add-form { grid-template-columns: 1fr 1fr; } }
 
   .inline-rule-panel {
@@ -261,57 +281,58 @@
   </div>
 
   <div class="card">
-    <h2>① 明細を入力する</h2>
+    <h2>① 明細を入力する <span class="primary-badge" style="margin-left:8px; vertical-align:middle;">まずはここから</span></h2>
 
-    <div class="grid2" style="margin-top:14px;">
-      <div class="primary-action">
-        <span class="primary-badge">① まずはここから</span>
-        <label class="field">CSV/PDFファイルを選択</label>
-        <input type="file" id="file-input" accept=".csv,.txt,.pdf">
-        <div class="hint" id="pdf-hint">PDF明細（利用明細のPDF等）にも対応しています。レイアウトによっては自動抽出がうまくいかない場合があるため、抽出後は貼り付け欄で内容を必ず確認してください。</div>
-        <div id="ocr-offer" style="display:none; margin-top:8px;">
-          <button class="btn btn-sm" id="ocr-try-btn" type="button">画像認識(OCR)で試す</button>
-          <div class="ocr-note">文字情報を持たないPDF（文字が図形として描画されているPDF等）向けの代替手段です。初回は追加で約5.6MBのダウンロードが発生し、数十秒〜数分かかります。画像認識のため数字を誤認識することがあるため、結果は必ず元のPDFと見比べてください。</div>
-          <div class="hint" id="ocr-progress"></div>
-        </div>
-        <div style="margin-top:10px;" id="encoding-row">
-          <label class="field">文字コード（CSV/TXTが文字化けする場合に切り替え）</label>
-          <select id="encoding-select">
-            <option value="utf-8">UTF-8（標準）</option>
-            <option value="shift-jis">Shift-JIS（日本のカード会社CSVに多い）</option>
-          </select>
-        </div>
+    <div class="primary-action" style="margin-top:14px;">
+      <label class="field">CSV/PDFファイルを選択</label>
+      <input type="file" id="file-input" accept=".csv,.txt,.pdf">
+      <div class="hint" id="pdf-hint">PDF明細（利用明細のPDF等）にも対応しています。レイアウトによっては自動抽出がうまくいかない場合があるため、抽出後は貼り付け欄で内容を必ず確認してください。</div>
+      <div id="ocr-offer" style="display:none; margin-top:8px;">
+        <button class="btn btn-sm" id="ocr-try-btn" type="button">画像認識(OCR)で試す</button>
+        <div class="ocr-note">文字情報を持たないPDF（文字が図形として描画されているPDF等）向けの代替手段です。初回は追加で約5.6MBのダウンロードが発生し、数十秒〜数分かかります。画像認識のため数字を誤認識することがあるため、結果は必ず元のPDFと見比べてください。</div>
+        <div class="hint" id="ocr-progress"></div>
       </div>
-      <div>
-        <label class="field">またはテキストで貼り付け</label>
-        <div><button class="btn btn-ghost btn-sm" id="toggle-paste-btn" type="button">明細をCSV / タブ区切りで貼り付け</button></div>
-        <div id="paste-area-wrap" style="display:none; margin-top:10px;">
-          <textarea id="paste-area" placeholder="例）
-日付,内容,金額
-2026/06/03,スーパーライフ,4200
-2026/06/05,トウキヨウガス,5000"></textarea>
-        </div>
-        <div class="hint" style="margin-top:8px;"><button class="btn btn-ghost btn-sm" id="load-sample" type="button">サンプルデータを試す</button></div>
+      <div style="margin-top:10px;" id="encoding-row">
+        <label class="field">文字コード（CSV/TXTが文字化けする場合に切り替え）</label>
+        <select id="encoding-select">
+          <option value="utf-8">UTF-8（標準）</option>
+          <option value="shift-jis">Shift-JIS（日本のカード会社CSVに多い）</option>
+        </select>
       </div>
     </div>
 
-    <div class="hint" id="parse-status" style="margin-top:8px;"></div>
+    <div class="divider">または</div>
 
-    <div style="margin-top:20px; padding-top:18px; border-top:1px solid var(--border);">
-      <label class="field">または、明細にない支出を1件だけ手動で追加</label>
+    <div class="block">
+      <label class="field">テキストで貼り付け</label>
+      <div><button class="btn btn-ghost btn-sm" id="toggle-paste-btn" type="button">明細をCSV / タブ区切りで貼り付け</button></div>
+      <div id="paste-area-wrap" style="display:none; margin-top:10px;">
+        <textarea id="paste-area" placeholder="例）
+日付,内容,金額
+2026/06/03,スーパーライフ,4200
+2026/06/05,トウキヨウガス,5000"></textarea>
+      </div>
+      <div class="hint" style="margin-top:8px;"><button class="btn btn-ghost btn-sm" id="load-sample" type="button">サンプルデータを試す</button></div>
+    </div>
+
+    <div class="divider">または</div>
+
+    <div class="block">
+      <label class="field">手動で追加</label>
       <div class="manual-add-form">
         <div><label class="field">日付（任意）</label><input type="date" id="manual-date"></div>
         <div><label class="field">内容</label><input type="text" id="manual-desc" placeholder="例）家賃"></div>
         <div><label class="field">金額</label><input type="number" id="manual-amount" placeholder="例）80000"></div>
-        <div><label class="field">カテゴリ</label><select id="manual-category"></select></div>
         <div><button class="btn btn-primary btn-sm" id="manual-add-btn" type="button">追加</button></div>
       </div>
-      <div class="hint" style="margin:4px 0 0;">カード明細に出てこない支出（家賃の口座振替など）を、ここから直接追加できます。貼り付け/ファイルを使わずこれだけで始めることもできます。</div>
+      <div class="hint" style="margin:4px 0 0;">カード明細に出てこない支出（家賃の口座振替など）を、ここから直接追加できます。貼り付け/ファイルを使わずこれだけで始めることもできます。カテゴリは他の明細と同じく④で分類してください。</div>
     </div>
+
+    <div class="hint" id="parse-status" style="margin-top:8px;"></div>
 
     <div id="column-step" class="primary-action" style="display:none; margin-top:20px;">
       <span class="primary-badge">② ここを確認</span>
-      <div class="grid3" style="margin-top:0;">
+      <div class="col-select-row">
         <div>
           <label class="field">日付の列</label>
           <select id="col-date"></select>
@@ -350,6 +371,7 @@
 
     <div class="row" style="margin-top:16px; display:none;" id="classify-step">
       <button class="btn btn-primary" id="classify-btn" type="button">分類する</button>
+      <button class="btn btn-ghost btn-sm" id="clear-input-btn" type="button">入力をクリア（やり直す）</button>
     </div>
   </div>
 
