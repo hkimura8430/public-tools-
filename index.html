@@ -119,7 +119,7 @@
     padding: 14px 14px 12px; background: color-mix(in srgb, var(--series-fixed) 7%, var(--surface-1));
   }
   .primary-badge {
-    display: inline-block; background: var(--series-fixed); color: #fff;
+    display: inline-block; background: color-mix(in srgb, var(--series-fixed) 18%, var(--surface-1)); color: var(--text-primary);
     font-size: 10.5px; font-weight: 700; padding: 2px 9px; border-radius: 999px;
     margin-bottom: 8px; letter-spacing: 0.02em;
   }
@@ -280,11 +280,11 @@
     <div class="hint">④内容ごとに分類する・⑤分類ルールは、分類結果を調整したいときに使う応用機能です。最初はこの3ステップだけで大丈夫です。</div>
   </div>
 
-  <div class="card">
+  <div class="card highlight">
     <h2>① 明細を入力する <span class="primary-badge" style="margin-left:8px; vertical-align:middle;">まずはここから</span></h2>
 
-    <div class="primary-action" style="margin-top:14px;">
-      <label class="field">CSV/PDFファイルを選択</label>
+    <div class="block" style="margin-top:14px;">
+      <label class="primary-badge">CSV/PDFファイルを選択</label>
       <input type="file" id="file-input" accept=".csv,.txt,.pdf">
       <div class="hint" id="pdf-hint">PDF明細（利用明細のPDF等）にも対応しています。レイアウトによっては自動抽出がうまくいかない場合があるため、抽出後は貼り付け欄で内容を必ず確認してください。</div>
       <div id="ocr-offer" style="display:none; margin-top:8px;">
@@ -304,7 +304,7 @@
     <div class="divider">または</div>
 
     <div class="block">
-      <label class="field">テキストで貼り付け</label>
+      <label class="primary-badge">テキストで貼り付け</label>
       <div><button class="btn btn-ghost btn-sm" id="toggle-paste-btn" type="button">明細をCSV / タブ区切りで貼り付け</button></div>
       <div id="paste-area-wrap" style="display:none; margin-top:10px;">
         <textarea id="paste-area" placeholder="例）
@@ -318,7 +318,7 @@
     <div class="divider">または</div>
 
     <div class="block">
-      <label class="field">手動で追加</label>
+      <label class="primary-badge">手動で追加</label>
       <div class="manual-add-form">
         <div><label class="field">日付（任意）</label><input type="date" id="manual-date"></div>
         <div><label class="field">内容</label><input type="text" id="manual-desc" placeholder="例）家賃"></div>
