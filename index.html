@@ -85,14 +85,45 @@
   }
   .privacy-note strong { color: var(--text-primary); }
 
+  /* Plain/neutral, same tone as .privacy-note -- blue is reserved for
+     "この色＝今のステップ／やるべき場所" (flow-step.active, primary-badge,
+     .card.highlight, .primary-action). A notice/explainer box like this one
+     is not an action target, so it stays neutral to avoid competing with
+     the actual current-step indicator. */
   .onboarding-note {
-    background: color-mix(in srgb, var(--series-fixed) 8%, var(--surface-1));
-    border: 1px solid color-mix(in srgb, var(--series-fixed) 30%, var(--border));
+    background: var(--surface-1); border: 1px solid var(--border);
     border-radius: 10px; padding: 14px 16px; margin: 0 0 20px; color: var(--text-secondary);
   }
   .onboarding-note strong { color: var(--text-primary); font-size: 14px; }
-  .onboarding-note ol { margin: 8px 0 6px; padding-left: 20px; font-size: 13px; line-height: 1.7; }
-  .onboarding-note .hint { margin-top: 4px; }
+  .onboarding-note .hint { margin-top: 8px; }
+
+  /* 3-step flow diagram in the onboarding note: which step is "live" is
+     driven by updateFlowSteps() in app.js (based on whether lastRawRows /
+     transactions have data yet), not fixed at page-load, so it always
+     matches what the user has actually done so far. */
+  .flow-steps { display:flex; align-items:stretch; gap:8px; margin: 12px 0 2px; flex-wrap:wrap; }
+  .flow-step {
+    display:flex; align-items:center; gap:8px; padding:8px 12px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--surface-1);
+    flex: 1 1 160px; min-width: 160px; transition: border-color .15s ease, background .15s ease;
+  }
+  .flow-num {
+    display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;
+    border-radius:50%; background: var(--gridline); color: var(--text-secondary);
+    font-size: 12px; font-weight:700; flex:none; transition: background .15s ease, color .15s ease;
+  }
+  .flow-title { font-size: 12.5px; font-weight:700; color: var(--text-secondary); }
+  .flow-sub { font-size: 11px; color: var(--text-muted); margin-top:1px; }
+  .flow-arrow { display:flex; align-items:center; color: var(--text-muted); font-size: 16px; flex:none; }
+  .flow-step.active { border-color: var(--series-fixed); background: color-mix(in srgb, var(--series-fixed) 10%, var(--surface-1)); }
+  .flow-step.active .flow-num { background: var(--series-fixed); color:#fff; }
+  .flow-step.active .flow-title { color: var(--text-primary); }
+  .flow-step.done .flow-num { background: var(--good); color:#fff; }
+  .flow-step.done .flow-title { color: var(--text-secondary); }
+  @media (max-width: 640px) {
+    .flow-steps { flex-direction: column; }
+    .flow-arrow { transform: rotate(90deg); align-self:center; margin: -6px 0; }
+  }
 
   .card {
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px;
@@ -126,6 +157,17 @@
   /* Same pill shape as .primary-badge but muted -- marks ①-2 / ①-3 as
      siblings of ①-1 (same step, alternative ways in) without implying
      "do this first" the way the blue badge does. */
+  /* Same pill look as .primary-badge, but specifically for the 3 method
+     headings (CSV/PDFファイルを選択 / テキストで貼り付け / 手動で追加) --
+     sized up from .primary-badge's 10.5px so they read as section titles,
+     not tiny status pills. Kept as its own class (rather than resizing
+     .primary-badge itself) so the smaller step-indicator badges elsewhere
+     (まずはここから／②どの列か選択／次はここを確認) are unaffected. */
+  .method-badge {
+    display: inline-block; background: color-mix(in srgb, var(--series-fixed) 18%, var(--surface-1)); color: var(--text-primary);
+    font-size: 15px; font-weight: 700; padding: 3px 12px; border-radius: 999px;
+    margin-bottom: 8px; letter-spacing: 0.02em;
+  }
   .step-badge {
     display: inline-block; background: var(--gridline); color: var(--text-secondary);
     font-size: 10.5px; font-weight: 700; padding: 2px 9px; border-radius: 999px;
@@ -272,19 +314,39 @@
 
   <div class="onboarding-note">
     <strong>🔰 初めての方へ：使い方は3ステップだけです</strong>
-    <ol>
-      <li>下の①に明細を貼り付けるか、CSV/PDFファイルを選ぶ（まずは「サンプルデータを試す」を押すと、実際のデータなしで動きを確認できます）</li>
-      <li>日付・内容・金額の列が正しいか確認する（自動で推定されますが、違っていたら選び直してください）</li>
-      <li>「分類する」を押すと、②以降に結果が表示されます</li>
-    </ol>
-    <div class="hint">④内容ごとに分類する・⑤分類ルールは、分類結果を調整したいときに使う応用機能です。最初はこの3ステップだけで大丈夫です。</div>
+    <div class="flow-steps" id="flow-steps">
+      <div class="flow-step" id="flow-step-1">
+        <span class="flow-num">1</span>
+        <div class="flow-text">
+          <div class="flow-title">明細を入力する</div>
+          <div class="flow-sub">①でファイル選択／貼り付け／手動追加</div>
+        </div>
+      </div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-step" id="flow-step-2">
+        <span class="flow-num">2</span>
+        <div class="flow-text">
+          <div class="flow-title">列を確認する</div>
+          <div class="flow-sub">日付・内容・金額が合っているか</div>
+        </div>
+      </div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-step" id="flow-step-3">
+        <span class="flow-num">3</span>
+        <div class="flow-text">
+          <div class="flow-title">結果を確認する</div>
+          <div class="flow-sub">「分類する」を押すと②以降に表示</div>
+        </div>
+      </div>
+    </div>
+    <div class="hint">今どの段階にいるかは、上の番号が青くなっている場所でわかります。④内容ごとに分類する・⑤分類ルールは、分類結果を調整したいときに使う応用機能です。最初はこの3ステップだけで大丈夫です。</div>
   </div>
 
   <div class="card highlight">
     <h2>① 明細を入力する <span class="primary-badge" style="margin-left:8px; vertical-align:middle;">まずはここから</span></h2>
 
     <div class="block" style="margin-top:14px;">
-      <label class="primary-badge">CSV/PDFファイルを選択</label>
+      <label class="method-badge">CSV/PDFファイルを選択</label>
       <input type="file" id="file-input" accept=".csv,.txt,.pdf">
       <div class="hint" id="pdf-hint">PDF明細（利用明細のPDF等）にも対応しています。レイアウトによっては自動抽出がうまくいかない場合があるため、抽出後は貼り付け欄で内容を必ず確認してください。</div>
       <div id="ocr-offer" style="display:none; margin-top:8px;">
@@ -304,7 +366,7 @@
     <div class="divider">または</div>
 
     <div class="block">
-      <label class="primary-badge">テキストで貼り付け</label>
+      <label class="method-badge">テキストで貼り付け</label>
       <div><button class="btn btn-ghost btn-sm" id="toggle-paste-btn" type="button">明細をCSV / タブ区切りで貼り付け</button></div>
       <div id="paste-area-wrap" style="display:none; margin-top:10px;">
         <textarea id="paste-area" placeholder="例）
@@ -318,7 +380,7 @@
     <div class="divider">または</div>
 
     <div class="block">
-      <label class="primary-badge">手動で追加</label>
+      <label class="method-badge">手動で追加</label>
       <div class="manual-add-form">
         <div><label class="field">日付（任意）</label><input type="date" id="manual-date"></div>
         <div><label class="field">内容</label><input type="text" id="manual-desc" placeholder="例）家賃"></div>
@@ -331,7 +393,7 @@
     <div class="hint" id="parse-status" style="margin-top:8px;"></div>
 
     <div id="column-step" class="primary-action" style="display:none; margin-top:20px;">
-      <span class="primary-badge">② ここを確認</span>
+      <span class="primary-badge">② どの列が日付・内容・金額か選択</span>
       <div class="col-select-row">
         <div>
           <label class="field">日付の列</label>
