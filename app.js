@@ -1258,6 +1258,17 @@
     if (btn) btn.textContent = "貼り付け内容を閉じる";
   }
 
+  function readFileAsText(file, enc, cb) {
+    var reader = new FileReader();
+    reader.onload = function (e) { cb(e.target.result); };
+    reader.readAsText(file, enc);
+  }
+
+  // Set by getInputText() when it had to auto-correct the encoding --
+  // analyzeInput() appends this to the status line so the user knows *why*
+  // the text changed, instead of it silently fixing itself with no trace.
+  var autoEncodingNote = "";
+
   // The 2nd callback arg tells the caller whether `text` came straight from
   // a file the user hasn't seen yet (vs. text already sitting in the paste
   // area) -- analyzeInput() uses it to mirror the PDF path's behavior of
@@ -1268,10 +1279,30 @@
     if (pasted && pasted.trim()) { cb(pasted, false); return; }
     var file = document.getElementById("file-input").files[0];
     if (file) {
-      var enc = document.getElementById("encoding-select").value;
-      var reader = new FileReader();
-      reader.onload = function (e) { cb(e.target.result, true); };
-      reader.readAsText(file, enc);
+      var encSelect = document.getElementById("encoding-select");
+      var enc = encSelect.value;
+      readFileAsText(file, enc, function (text) {
+        // Japanese card-issuer CSVs are very often Shift-JIS, but the
+        // encoding picker defaults to UTF-8 -- most users have no reason to
+        // know that dropdown exists, let alone that it's the fix. Decoding
+        // Shift-JIS bytes as UTF-8 reliably produces U+FFFD replacement
+        // characters wherever a byte sequence isn't valid UTF-8, so that's
+        // a solid signal to retry once as Shift-JIS automatically instead
+        // of just handing the user mojibake.
+        if (enc === "utf-8" && text.indexOf("�") !== -1) {
+          readFileAsText(file, "shift-jis", function (retryText) {
+            if (retryText.indexOf("�") === -1) {
+              encSelect.value = "shift-jis";
+              autoEncodingNote = "（UTF-8で読み取れなかったため、文字コードをShift-JISに自動で切り替えました）";
+              cb(retryText, true);
+            } else {
+              cb(text, true); // neither encoding came back clean -- show what UTF-8 produced
+            }
+          });
+          return;
+        }
+        cb(text, true);
+      });
       return;
     }
     cb("", false);
@@ -1306,8 +1337,37 @@
       var guess = detectColumns(dataRows.slice(0, 60));
       rebuildColumnSelects(rowsAll[0], hasHeader, guess);
       renderPreviewTable(rowsAll[0], hasHeader, guess.numCols);
-      status.textContent = rowsAll.length + " 行読み込みました（列は必要に応じて選び直してください）";
+      status.textContent = rowsAll.length + " 行読み込みました（列は必要に応じて選び直してください）" + autoEncodingNote;
+      autoEncodingNote = "";
+      updateFlowSteps();
     });
+  }
+
+  // Drives the "初めての方へ" 3-step flow diagram at the top of the page --
+  // keeps it in sync with what the user has actually done so far instead of
+  // being a static checklist, so "今どの段階か" is always one glance away.
+  // Step 3 (結果を確認する) covers manual-add-only entry too (transactions
+  // can go from 0 to >0 without ever touching column-step), so it's judged
+  // purely by hasData, independent of whether step 2 was ever visited.
+  function updateFlowSteps() {
+    var step = transactions.length > 0 ? 3 : (lastRawRows.length > 0 ? 2 : 1);
+    [1, 2, 3].forEach(function (n) {
+      var el = document.getElementById("flow-step-" + n);
+      if (!el) return;
+      el.classList.remove("active", "done");
+      if (n < step) el.classList.add("done");
+      else if (n === step) el.classList.add("active");
+    });
+    // ①'s own card border + "まずはここから" badge used to be hardcoded on
+    // regardless of progress, which fell out of sync with the flow diagram
+    // above it the moment the user moved past step 1 (the diagram would
+    // mark 1 as "done" while ① stayed permanently highlighted blue). Now
+    // both are driven by the same `step` value, so ① is only the
+    // blue/"current" one while the user is actually still on it.
+    var inputCard = document.getElementById("input-card");
+    var inputBadge = document.getElementById("input-card-badge");
+    if (inputCard) inputCard.classList.toggle("highlight", step === 1);
+    if (inputBadge) inputBadge.style.display = step === 1 ? "inline-block" : "none";
   }
 
   function runClassification() {
@@ -1790,6 +1850,7 @@
     // as running "分類する" would.
     document.getElementById("empty-state").style.display = hasData ? "none" : "block";
     document.getElementById("results-section").style.display = hasData ? "block" : "none";
+    updateFlowSteps();
     renderRulesTable();
     if (!hasData) return;
 
@@ -2135,6 +2196,7 @@
     document.getElementById("paste-area-wrap").style.display = "none";
     document.getElementById("toggle-paste-btn").textContent = "明細をCSV / タブ区切りで貼り付け";
     document.getElementById("parse-status").textContent = "";
+    updateFlowSteps();
   });
   // 取引一覧 (inside ④) is hidden by default -- ④'s grouped-by-content view
   // already covers the common "classify / delete a noise row" workflow,
